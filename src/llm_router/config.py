@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+
 def _env_bool(key: str, default: bool) -> bool:
     val = os.getenv(key, "").lower()
     if val in ("1", "true", "yes"):
@@ -25,36 +26,60 @@ class Settings:
     Simple settings object populated from environment variables.
     Compatible with or without pydantic / pydantic-settings.
     """
+
     # Server
-    host:  str = os.getenv("ROUTER_HOST", "0.0.0.0")
-    port:  int = int(os.getenv("ROUTER_PORT", "7544"))
+    host: str = os.getenv("ROUTER_HOST", "0.0.0.0")
+    port: int = int(os.getenv("ROUTER_PORT", "7544"))
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     debug: bool = _env_bool("DEBUG", False)
 
     # Timeouts
-    llm_timeout:       int = int(os.getenv("LLM_TIMEOUT", "60"))
+    llm_timeout: int = int(os.getenv("LLM_TIMEOUT", "60"))
     discovery_timeout: int = int(os.getenv("DISCOVERY_TIMEOUT", "10"))
 
     # Cache
-    cache_dir:              str  = os.getenv("CACHE_DIR", "/tmp/llm_router_cache")
-    response_cache_ttl:     int  = int(os.getenv("RESPONSE_CACHE_TTL", "3600"))
-    capability_cache_ttl:   int  = int(os.getenv("CAPABILITY_CACHE_TTL", "3600"))
-    cache_max_size_mb:      int  = int(os.getenv("CACHE_MAX_SIZE_MB", "512"))
+    cache_dir: str = os.getenv("CACHE_DIR", "/tmp/llm_router_cache")
+    response_cache_ttl: int = int(os.getenv("RESPONSE_CACHE_TTL", "3600"))
+    capability_cache_ttl: int = int(os.getenv("CAPABILITY_CACHE_TTL", "3600"))
+    cache_max_size_mb: int = int(os.getenv("CACHE_MAX_SIZE_MB", "512"))
     semantic_cache_enabled: bool = _env_bool("SEMANTIC_CACHE_ENABLED", True)
-    exact_cache_enabled:    bool = _env_bool("EXACT_CACHE_ENABLED", True)
+    exact_cache_enabled: bool = _env_bool("EXACT_CACHE_ENABLED", True)
 
     # Routing
-    default_strategy:           str   = os.getenv("DEFAULT_STRATEGY", "auto")
-    max_retries:                int   = int(os.getenv("MAX_RETRIES", "3"))
-    retry_base_delay:           float = float(os.getenv("RETRY_BASE_DELAY", "1.0"))
-    daily_quota_cooldown_seconds: int = int(os.getenv("DAILY_QUOTA_COOLDOWN_SECONDS", "3600"))
-    enable_ollama_fallback:     bool  = _env_bool("ENABLE_OLLAMA_FALLBACK", True)
-    model_refresh_interval:     int   = int(os.getenv("MODEL_REFRESH_INTERVAL", "3600"))
-    verbose_litellm:            bool  = _env_bool("VERBOSE_LITELLM", False)
-    auth_failure_cooldown_seconds: int = int(os.getenv("AUTH_FAILURE_COOLDOWN_SECONDS", "86400"))
+    default_strategy: str = os.getenv("DEFAULT_STRATEGY", "auto")
+    max_retries: int = int(os.getenv("MAX_RETRIES", "3"))
+    retry_base_delay: float = float(os.getenv("RETRY_BASE_DELAY", "1.0"))
+    daily_quota_cooldown_seconds: int = int(
+        os.getenv("DAILY_QUOTA_COOLDOWN_SECONDS", "3600")
+    )
+    enable_ollama_fallback: bool = _env_bool("ENABLE_OLLAMA_FALLBACK", True)
+    model_refresh_interval: int = int(os.getenv("MODEL_REFRESH_INTERVAL", "3600"))
+    verbose_litellm: bool = _env_bool("VERBOSE_LITELLM", False)
+    auth_failure_cooldown_seconds: int = int(
+        os.getenv("AUTH_FAILURE_COOLDOWN_SECONDS", "86400")
+    )
 
     # Ollama
     ollama_base_url: str = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
+
+    # CORS
+    cors_allowed_origins: str = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    cors_allow_all: bool = _env_bool("CORS_ALLOW_ALL", True)
+
+    @property
+    def cors_origins(self) -> list:
+        """Return a list of allowed CORS origins. Empty list means none.
+
+        The environment variable `CORS_ALLOWED_ORIGINS` may contain a
+        comma-separated list of origins. In production you should set
+        `CORS_ALLOW_ALL=false` and provide a list of allowed origins.
+        """
+        if self.cors_allow_all:
+            return ["*"]
+        raw = (self.cors_allowed_origins or "").strip()
+        if not raw:
+            return []
+        return [o.strip() for o in raw.split(",") if o.strip()]
 
 
 settings = Settings()
@@ -129,7 +154,7 @@ PROVIDER_CATALOGUE: Dict[str, Dict[str, Any]] = {
     "huggingface": {
         "api_key_env": "HF_TOKEN",
         "base_url": "https://router.huggingface.co/v1",
-        "models_url": None,   # HF doesn't expose a clean /models list
+        "models_url": None,  # HF doesn't expose a clean /models list
         "rpm_limit": 50,
         "rpd_limit": 10_000,
         "priority": 6,
@@ -203,7 +228,7 @@ PROVIDER_CATALOGUE: Dict[str, Dict[str, Any]] = {
         "models_url": f"{settings.ollama_base_url}/api/tags",
         "rpm_limit": 10_000,
         "rpd_limit": 10_000_000,
-        "priority": 999,   # never wins cloud selection
+        "priority": 999,  # never wins cloud selection
         "free_tier": True,
         "capabilities": {"text", "chat"},
     },
@@ -214,77 +239,312 @@ PROVIDER_CATALOGUE: Dict[str, Dict[str, Any]] = {
 
 BOOTSTRAP_MODELS: Dict[str, List[Dict[str, Any]]] = {
     "groq": [
-        {"id": "llama-3.3-70b-versatile", "context": 128_000, "rpm": 30, "capabilities": {"text", "chat", "function_calling"}},
-        {"id": "llama-3.1-8b-instant",    "context": 128_000, "rpm": 30, "capabilities": {"text", "chat"}},
-        {"id": "mixtral-8x7b-32768",       "context": 32_768,  "rpm": 30, "capabilities": {"text", "chat", "function_calling"}},
-        {"id": "llama-3.2-90b-vision-preview", "context": 8_192, "rpm": 15, "capabilities": {"text", "chat", "vision"}},
+        {
+            "id": "llama-3.3-70b-versatile",
+            "context": 128_000,
+            "rpm": 30,
+            "capabilities": {"text", "chat", "function_calling"},
+        },
+        {
+            "id": "llama-3.1-8b-instant",
+            "context": 128_000,
+            "rpm": 30,
+            "capabilities": {"text", "chat"},
+        },
+        {
+            "id": "mixtral-8x7b-32768",
+            "context": 32_768,
+            "rpm": 30,
+            "capabilities": {"text", "chat", "function_calling"},
+        },
+        {
+            "id": "llama-3.2-90b-vision-preview",
+            "context": 8_192,
+            "rpm": 15,
+            "capabilities": {"text", "chat", "vision"},
+        },
     ],
     "gemini": [
-        {"id": "gemini-2.0-flash",      "context": 1_048_576, "rpm": 15, "capabilities": {"text", "chat", "vision", "function_calling"}},
-        {"id": "gemini-1.5-flash",      "context": 1_048_576, "rpm": 15, "capabilities": {"text", "chat", "vision", "function_calling"}},
-        {"id": "gemini-1.5-flash-8b",   "context": 1_048_576, "rpm": 15, "capabilities": {"text", "chat", "vision"}},
-        {"id": "gemini-1.5-pro",        "context": 2_097_152, "rpm": 5,  "capabilities": {"text", "chat", "vision", "function_calling"}},
-        {"id": "text-embedding-004",    "context": 2_048,     "rpm": 100,"capabilities": {"embedding"}},
+        {
+            "id": "gemini-2.0-flash",
+            "context": 1_048_576,
+            "rpm": 15,
+            "capabilities": {"text", "chat", "vision", "function_calling"},
+        },
+        {
+            "id": "gemini-1.5-flash",
+            "context": 1_048_576,
+            "rpm": 15,
+            "capabilities": {"text", "chat", "vision", "function_calling"},
+        },
+        {
+            "id": "gemini-1.5-flash-8b",
+            "context": 1_048_576,
+            "rpm": 15,
+            "capabilities": {"text", "chat", "vision"},
+        },
+        {
+            "id": "gemini-1.5-pro",
+            "context": 2_097_152,
+            "rpm": 5,
+            "capabilities": {"text", "chat", "vision", "function_calling"},
+        },
+        {
+            "id": "text-embedding-004",
+            "context": 2_048,
+            "rpm": 100,
+            "capabilities": {"embedding"},
+        },
     ],
     "mistral": [
-        {"id": "mistral-small-latest",  "context": 32_768, "rpm": 5,  "capabilities": {"text", "chat", "function_calling"}},
-        {"id": "open-mistral-nemo",     "context": 128_000,"rpm": 5,  "capabilities": {"text", "chat"}},
-        {"id": "mistral-embed",         "context": 8_192,  "rpm": 5,  "capabilities": {"embedding"}},
+        {
+            "id": "mistral-small-latest",
+            "context": 32_768,
+            "rpm": 5,
+            "capabilities": {"text", "chat", "function_calling"},
+        },
+        {
+            "id": "open-mistral-nemo",
+            "context": 128_000,
+            "rpm": 5,
+            "capabilities": {"text", "chat"},
+        },
+        {
+            "id": "mistral-embed",
+            "context": 8_192,
+            "rpm": 5,
+            "capabilities": {"embedding"},
+        },
     ],
     "openrouter": [
-        {"id": "google/gemma-3n-e4b-it:free",          "context": 8_192,  "rpm": 20, "capabilities": {"text", "chat", "vision"}},
-        {"id": "qwen/qwen2.5-72b-instruct:free",       "context": 128_000,"rpm": 20, "capabilities": {"text", "chat", "function_calling"}},
-        {"id": "qwen/qwen2-vl-72b-instruct:free",      "context": 128_000,"rpm": 20, "capabilities": {"text", "chat", "vision"}},
-        {"id": "deepseek/deepseek-v3-base:free",       "context": 64_000, "rpm": 20, "capabilities": {"text", "chat"}},
-        {"id": "google/gemma-3-27b-it:free",           "context": 8_192,  "rpm": 20, "capabilities": {"text", "chat"}},
-        {"id": "meta-llama/llama-3.3-70b-instruct:free","context": 128_000,"rpm": 20, "capabilities": {"text", "chat", "function_calling"}},
+        {
+            "id": "google/gemma-3n-e4b-it:free",
+            "context": 8_192,
+            "rpm": 20,
+            "capabilities": {"text", "chat", "vision"},
+        },
+        {
+            "id": "qwen/qwen2.5-72b-instruct:free",
+            "context": 128_000,
+            "rpm": 20,
+            "capabilities": {"text", "chat", "function_calling"},
+        },
+        {
+            "id": "qwen/qwen2-vl-72b-instruct:free",
+            "context": 128_000,
+            "rpm": 20,
+            "capabilities": {"text", "chat", "vision"},
+        },
+        {
+            "id": "deepseek/deepseek-v3-base:free",
+            "context": 64_000,
+            "rpm": 20,
+            "capabilities": {"text", "chat"},
+        },
+        {
+            "id": "google/gemma-3-27b-it:free",
+            "context": 8_192,
+            "rpm": 20,
+            "capabilities": {"text", "chat"},
+        },
+        {
+            "id": "meta-llama/llama-3.3-70b-instruct:free",
+            "context": 128_000,
+            "rpm": 20,
+            "capabilities": {"text", "chat", "function_calling"},
+        },
     ],
     "together": [
-        {"id": "meta-llama/Llama-3-70b-chat-hf",            "context": 8_192,  "rpm": 60, "capabilities": {"text", "chat"}},
-        {"id": "mistralai/Mixtral-8x7B-Instruct-v0.1",      "context": 32_768, "rpm": 60, "capabilities": {"text", "chat"}},
-        {"id": "togethercomputer/m2-bert-80M-8k-retrieval",  "context": 8_192,  "rpm": 60, "capabilities": {"embedding"}},
+        {
+            "id": "meta-llama/Llama-3-70b-chat-hf",
+            "context": 8_192,
+            "rpm": 60,
+            "capabilities": {"text", "chat"},
+        },
+        {
+            "id": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+            "context": 32_768,
+            "rpm": 60,
+            "capabilities": {"text", "chat"},
+        },
+        {
+            "id": "togethercomputer/m2-bert-80M-8k-retrieval",
+            "context": 8_192,
+            "rpm": 60,
+            "capabilities": {"embedding"},
+        },
     ],
     "huggingface": [
-        {"id": "meta-llama/Llama-3.3-70B-Instruct", "context": 128_000, "rpm": 50, "capabilities": {"text", "chat"}},
-        {"id": "meta-llama/Llama-3.2-1B-Instruct",  "context": 128_000, "rpm": 50, "capabilities": {"text", "chat"}},
-        {"id": "sentence-transformers/all-MiniLM-L6-v2", "context": 512, "rpm": 100, "capabilities": {"embedding"}},
+        {
+            "id": "meta-llama/Llama-3.3-70B-Instruct",
+            "context": 128_000,
+            "rpm": 50,
+            "capabilities": {"text", "chat"},
+        },
+        {
+            "id": "meta-llama/Llama-3.2-1B-Instruct",
+            "context": 128_000,
+            "rpm": 50,
+            "capabilities": {"text", "chat"},
+        },
+        {
+            "id": "sentence-transformers/all-MiniLM-L6-v2",
+            "context": 512,
+            "rpm": 100,
+            "capabilities": {"embedding"},
+        },
     ],
     "cohere": [
-        {"id": "command-r",         "context": 128_000, "rpm": 5, "capabilities": {"text", "chat", "function_calling"}},
-        {"id": "command-light",     "context": 4_096,   "rpm": 5, "capabilities": {"text", "chat"}},
-        {"id": "embed-english-v3.0","context": 512,     "rpm": 5, "capabilities": {"embedding"}},
-        {"id": "embed-multilingual-v3.0","context": 512,"rpm": 5, "capabilities": {"embedding"}},
+        {
+            "id": "command-r",
+            "context": 128_000,
+            "rpm": 5,
+            "capabilities": {"text", "chat", "function_calling"},
+        },
+        {
+            "id": "command-light",
+            "context": 4_096,
+            "rpm": 5,
+            "capabilities": {"text", "chat"},
+        },
+        {
+            "id": "embed-english-v3.0",
+            "context": 512,
+            "rpm": 5,
+            "capabilities": {"embedding"},
+        },
+        {
+            "id": "embed-multilingual-v3.0",
+            "context": 512,
+            "rpm": 5,
+            "capabilities": {"embedding"},
+        },
     ],
     "deepseek": [
-        {"id": "deepseek-chat",     "context": 128_000, "rpm": 60, "capabilities": {"text", "chat", "function_calling"}},
-        {"id": "deepseek-coder",    "context": 128_000, "rpm": 60, "capabilities": {"text", "chat", "function_calling"}},
+        {
+            "id": "deepseek-chat",
+            "context": 128_000,
+            "rpm": 60,
+            "capabilities": {"text", "chat", "function_calling"},
+        },
+        {
+            "id": "deepseek-coder",
+            "context": 128_000,
+            "rpm": 60,
+            "capabilities": {"text", "chat", "function_calling"},
+        },
     ],
     "dashscope": [
-        {"id": "qwen-turbo",        "context": 8_192,   "rpm": 60, "capabilities": {"text", "chat", "function_calling"}},
-        {"id": "qwen-plus",         "context": 32_768,  "rpm": 30, "capabilities": {"text", "chat", "vision", "function_calling"}},
-        {"id": "qwen-max",          "context": 32_768,  "rpm": 10, "capabilities": {"text", "chat", "vision", "function_calling"}},
-        {"id": "qwen-vl-plus",      "context": 8_192,   "rpm": 30, "capabilities": {"text", "chat", "vision"}},
-        {"id": "text-embedding-v3", "context": 8_192,   "rpm": 60, "capabilities": {"embedding"}},
+        {
+            "id": "qwen-turbo",
+            "context": 8_192,
+            "rpm": 60,
+            "capabilities": {"text", "chat", "function_calling"},
+        },
+        {
+            "id": "qwen-plus",
+            "context": 32_768,
+            "rpm": 30,
+            "capabilities": {"text", "chat", "vision", "function_calling"},
+        },
+        {
+            "id": "qwen-max",
+            "context": 32_768,
+            "rpm": 10,
+            "capabilities": {"text", "chat", "vision", "function_calling"},
+        },
+        {
+            "id": "qwen-vl-plus",
+            "context": 8_192,
+            "rpm": 30,
+            "capabilities": {"text", "chat", "vision"},
+        },
+        {
+            "id": "text-embedding-v3",
+            "context": 8_192,
+            "rpm": 60,
+            "capabilities": {"embedding"},
+        },
     ],
     "xai": [
-        {"id": "grok-4-latest",        "context": 128_000, "rpm": 60, "capabilities": {"text", "chat", "vision", "function_calling"}},
-        {"id": "grok-2-vision-1212",   "context": 32_768,  "rpm": 60, "capabilities": {"text", "chat", "vision"}},
+        {
+            "id": "grok-4-latest",
+            "context": 128_000,
+            "rpm": 60,
+            "capabilities": {"text", "chat", "vision", "function_calling"},
+        },
+        {
+            "id": "grok-2-vision-1212",
+            "context": 32_768,
+            "rpm": 60,
+            "capabilities": {"text", "chat", "vision"},
+        },
     ],
     "openai": [
-        {"id": "gpt-4o-mini",       "context": 128_000, "rpm": 60,  "capabilities": {"text", "chat", "vision", "function_calling"}},
-        {"id": "gpt-4o",            "context": 128_000, "rpm": 60,  "capabilities": {"text", "chat", "vision", "function_calling"}},
-        {"id": "text-embedding-3-small","context": 8_191,"rpm": 100,"capabilities": {"embedding"}},
-        {"id": "text-embedding-3-large","context": 8_191,"rpm": 100,"capabilities": {"embedding"}},
+        {
+            "id": "gpt-4o-mini",
+            "context": 128_000,
+            "rpm": 60,
+            "capabilities": {"text", "chat", "vision", "function_calling"},
+        },
+        {
+            "id": "gpt-4o",
+            "context": 128_000,
+            "rpm": 60,
+            "capabilities": {"text", "chat", "vision", "function_calling"},
+        },
+        {
+            "id": "text-embedding-3-small",
+            "context": 8_191,
+            "rpm": 100,
+            "capabilities": {"embedding"},
+        },
+        {
+            "id": "text-embedding-3-large",
+            "context": 8_191,
+            "rpm": 100,
+            "capabilities": {"embedding"},
+        },
     ],
     "anthropic": [
-        {"id": "claude-3-haiku-20240307",    "context": 200_000, "rpm": 60, "capabilities": {"text", "chat", "vision", "function_calling"}},
-        {"id": "claude-3-5-haiku-20241022",  "context": 200_000, "rpm": 60, "capabilities": {"text", "chat", "vision", "function_calling"}},
-        {"id": "claude-3-5-sonnet-20241022", "context": 200_000, "rpm": 60, "capabilities": {"text", "chat", "vision", "function_calling"}},
+        {
+            "id": "claude-3-haiku-20240307",
+            "context": 200_000,
+            "rpm": 60,
+            "capabilities": {"text", "chat", "vision", "function_calling"},
+        },
+        {
+            "id": "claude-3-5-haiku-20241022",
+            "context": 200_000,
+            "rpm": 60,
+            "capabilities": {"text", "chat", "vision", "function_calling"},
+        },
+        {
+            "id": "claude-3-5-sonnet-20241022",
+            "context": 200_000,
+            "rpm": 60,
+            "capabilities": {"text", "chat", "vision", "function_calling"},
+        },
     ],
     "ollama": [
-        {"id": "llama3.2:latest",    "context": 128_000, "rpm": 10_000, "capabilities": {"text", "chat"}},
-        {"id": "llava:latest",       "context": 4_096,   "rpm": 10_000, "capabilities": {"text", "chat", "vision"}},
-        {"id": "nomic-embed-text",   "context": 8_192,   "rpm": 10_000, "capabilities": {"embedding"}},
+        {
+            "id": "llama3.2:latest",
+            "context": 128_000,
+            "rpm": 10_000,
+            "capabilities": {"text", "chat"},
+        },
+        {
+            "id": "llava:latest",
+            "context": 4_096,
+            "rpm": 10_000,
+            "capabilities": {"text", "chat", "vision"},
+        },
+        {
+            "id": "nomic-embed-text",
+            "context": 8_192,
+            "rpm": 10_000,
+            "capabilities": {"embedding"},
+        },
     ],
 }
 
@@ -292,16 +552,16 @@ BOOTSTRAP_MODELS: Dict[str, List[Dict[str, Any]]] = {
 # ── Capability → task-type hints ─────────────────────────────────────────────
 
 TASK_CAPABILITY_MAP: Dict[str, str] = {
-    "text_generation":    "text",
-    "chat_completion":    "chat",
-    "embeddings":         "embedding",
-    "vision_classify":    "vision",
-    "vision_detect":      "vision",
-    "vision_ocr":         "vision",
-    "vision_qa":          "vision",
-    "vision_caption":     "vision",
-    "vision_understanding":"vision",
-    "function_calling":   "function_calling",
+    "text_generation": "text",
+    "chat_completion": "chat",
+    "embeddings": "embedding",
+    "vision_classify": "vision",
+    "vision_detect": "vision",
+    "vision_ocr": "vision",
+    "vision_qa": "vision",
+    "vision_caption": "vision",
+    "vision_understanding": "vision",
+    "function_calling": "function_calling",
 }
 
 # Preferred cloud provider order for routing (ollama EXCLUDED)
@@ -312,17 +572,17 @@ CLOUD_PRIORITY_ORDER: List[str] = sorted(
 
 # Map from litellm model prefix → our canonical provider name
 LITELLM_PROVIDER_ALIASES: Dict[str, str] = {
-    "gpt":          "openai",
-    "claude":       "anthropic",
-    "gemini":       "gemini",
-    "groq":         "groq",
-    "mistral":      "mistral",
-    "openrouter":   "openrouter",
-    "together":     "together",
-    "huggingface":  "huggingface",
-    "deepseek":     "deepseek",
-    "qwen":         "dashscope",
-    "grok":         "xai",
-    "ollama":       "ollama",
-    "cohere":       "cohere",
+    "gpt": "openai",
+    "claude": "anthropic",
+    "gemini": "gemini",
+    "groq": "groq",
+    "mistral": "mistral",
+    "openrouter": "openrouter",
+    "together": "together",
+    "huggingface": "huggingface",
+    "deepseek": "deepseek",
+    "qwen": "dashscope",
+    "grok": "xai",
+    "ollama": "ollama",
+    "cohere": "cohere",
 }
