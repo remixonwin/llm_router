@@ -1,0 +1,13 @@
+{
+  "source_directories": ["src"],
+  "search_path": ["src"],
+  "exclude": [
+    ".*test.*",
+    ".*venv.*",
+    ".*\\.git.*",
+    ".*__pycache__.*"
+  ],
+  "workers": {
+    "enable": false
+  }
+}
