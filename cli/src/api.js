@@ -50,14 +50,60 @@ async function postStream(path, data, onChunk, onDone, onError) {
     // Node stream readable
     if (body && typeof body.on === 'function') {
       body.setEncoding && body.setEncoding('utf8');
+
+      // Robust parser: handle plain chunks, server-sent-events (lines starting
+      // with "data: "), and partial JSON fragments. We accumulate a buffer
+      // and emit cleaned messages via onChunk.
+      let buf = '';
+
+      function flushLine(line) {
+        if (!line) return;
+        // SSE style: "data: {...}" or multiple data: lines; strip prefix
+        if (line.startsWith('data:')) {
+          const v = line.replace(/^data:\s*/i, '');
+          try {
+            const parsed = JSON.parse(v);
+            onChunk(JSON.stringify(parsed));
+            return;
+          } catch (e) {
+            onChunk(v);
+            return;
+          }
+        }
+
+        // Try to parse as JSON whole message
+        try {
+          const parsed = JSON.parse(line);
+          onChunk(JSON.stringify(parsed));
+          return;
+        } catch (_) {
+          // Not JSON, emit raw
+          onChunk(line);
+        }
+      }
+
       body.on('data', (chunk) => {
         try {
-          onChunk(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
+          const s = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+          buf += s;
+
+          // Split on newlines; keep partial last line in buffer
+          const parts = buf.split(/\r?\n/);
+          buf = parts.pop() || '';
+          for (const part of parts) {
+            // Ignore keep-alive lines
+            const trimmed = part.trim();
+            if (!trimmed) continue;
+            flushLine(trimmed);
+          }
         } catch (e) {
           // swallow handler errors
         }
       });
-      body.on('end', () => onDone && onDone());
+      body.on('end', () => {
+        if (buf && buf.trim()) flushLine(buf.trim());
+        onDone && onDone();
+      });
       body.on('error', (err) => onError && onError(err));
       return;
     }

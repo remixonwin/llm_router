@@ -29,7 +29,8 @@ function Chat() {
           '/v1/chat/completions',
           payload,
           (chunk) => {
-            setResponse((prev) => (prev ? prev + chunk : chunk));
+            // Try to append with new line for readability
+            setResponse((prev) => (prev ? prev + '\n' + chunk : chunk));
           },
           () => resolve(),
           (err) => reject(err)

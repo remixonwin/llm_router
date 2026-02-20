@@ -4,12 +4,12 @@
   "private": true,
   "description": "Interactive CLI frontend for Intelligent LLM Router (Ink/JSX)",
   "scripts": {
-    "start": "node -r @babel/register src/index.jsx"
+    "start": "node --experimental-top-level-await -r @babel/register src/index.jsx"
   },
   "dependencies": {
-    "ink": "^4.0.0",
-    "ink-select-input": "^5.0.0",
-    "ink-text-input": "^6.0.0",
+    "ink": "^4.4.1",
+    "ink-select-input": "^4.2.0",
+    "ink-text-input": "^5.0.0",
     "react": "18.2.0",
     "undici": "^5.0.0"
   },
