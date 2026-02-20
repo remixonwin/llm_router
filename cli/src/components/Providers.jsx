@@ -1,7 +1,6 @@
-const React = require('react');
-const { Box, Text } = require('ink');
-const { useEffect, useState } = React;
-const api = require('../api');
+import React, { useEffect, useState } from 'react';
+import { Box, Text } from 'ink';
+import * as api from '../api.js';
 
 function Providers() {
   const [stats, setStats] = useState(null);
@@ -38,4 +37,4 @@ function Providers() {
   );
 }
 
-module.exports = Providers;
+export default Providers;

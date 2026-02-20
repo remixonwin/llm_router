@@ -17,14 +17,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 try:
     import importlib.util
 
     if importlib.util.find_spec("httpx") is not None:
-        import httpx  # type: ignore[import]
-
         _HTTPX_AVAILABLE = True
     else:
         _HTTPX_AVAILABLE = False
@@ -151,7 +149,7 @@ _CODING_KEYWORDS: frozenset = frozenset(
 
 def _infer_capabilities(model_id: str, declared: set[str] | None = None) -> set[str]:
     """Infer capability set from model name, seeded by any declared capabilities."""
-    caps: Set[str] = declared.copy() if declared else {"text", "chat"}
+    caps: set[str] = declared.copy() if declared else {"text", "chat"}
     ml = model_id.lower()
 
     # Audio models (whisper, etc.) are transcription-only, not chat
@@ -202,13 +200,13 @@ def _parse_openai_style(
 
 
 def _parse_together_models(
-    provider: str, data: Dict[str, Any] | List[Dict], bootstrap: List[Dict]
-) -> List[ModelRecord]:
+    provider: str, data: dict[str, Any] | list[dict], bootstrap: list[dict]
+) -> list[ModelRecord]:
     """Parse Together API /v1/models response → ModelRecord list.
 
     Together returns a list directly instead of {"data": [...]} like OpenAI.
     """
-    records: List[ModelRecord] = []
+    records: list[ModelRecord] = []
     # Together returns a list directly, not {"data": [...]}
     if isinstance(data, list):
         models_data = data
@@ -223,7 +221,7 @@ def _parse_together_models(
             continue
         # Infer capabilities from model type
         model_type = item.get("type", "")
-        caps: Set[str] = set()
+        caps: set[str] = set()
         if model_type == "chat":
             caps.update({"text", "chat"})
         elif model_type == "embedding":
@@ -258,10 +256,10 @@ def _parse_together_models(
 
 
 def _parse_gemini_models(
-    provider: str, data: Dict[str, Any], bootstrap: List[Dict]
-) -> List[ModelRecord]:
+    provider: str, data: dict[str, Any], bootstrap: list[dict]
+) -> list[ModelRecord]:
     """Parse Google's /v1beta/models → ModelRecord list."""
-    records: List[ModelRecord] = []
+    records: list[ModelRecord] = []
     for item in data.get("models", []):
         raw_name = item.get("name", "")
         # raw_name looks like  "models/gemini-1.5-flash"
@@ -269,13 +267,13 @@ def _parse_gemini_models(
         if not mid:
             continue
         actions = {a.lower() for a in item.get("supportedGenerationMethods", [])}
-        caps: Set[str] = set()
+        caps: set[str] = set()
         if "generatecontent" in actions:
             caps.update({"text", "chat"})
         if "embedcontent" in actions:
             caps.add("embedding")
         caps = _infer_capabilities(mid, caps)
-        boot: Dict[str, Any] = next((m for m in bootstrap if m["id"] == mid), {})
+        boot: dict[str, Any] = next((m for m in bootstrap if m["id"] == mid), {})
         records.append(
             ModelRecord(
                 provider=provider,
@@ -294,17 +292,17 @@ def _parse_gemini_models(
 
 
 def _parse_openrouter_models(
-    provider: str, data: Dict[str, Any], bootstrap: List[Dict]
-) -> List[ModelRecord]:
+    provider: str, data: dict[str, Any], bootstrap: list[dict]
+) -> list[ModelRecord]:
     """OpenRouter /api/v1/models — each entry has 'architecture' with modalities."""
-    records: List[ModelRecord] = []
+    records: list[ModelRecord] = []
     for item in data.get("data", []):
         mid = item.get("id", "")
         if not mid:
             continue
         arch = item.get("architecture") or {}
         modalities = arch.get("modality", "text->text")
-        caps: Set[str] = {"text", "chat"}
+        caps: set[str] = {"text", "chat"}
         if "image" in modalities:
             caps.add("vision")
         if (
@@ -334,9 +332,9 @@ def _parse_openrouter_models(
 
 
 def _parse_mistral_models(
-    provider: str, data: Dict[str, Any], bootstrap: List[Dict]
-) -> List[ModelRecord]:
-    records: List[ModelRecord] = []
+    provider: str, data: dict[str, Any], bootstrap: list[dict]
+) -> list[ModelRecord]:
+    records: list[ModelRecord] = []
     for item in data.get("data", []):
         mid = item.get("id", "")
         if not mid:
@@ -346,7 +344,7 @@ def _parse_mistral_models(
             caps.add("function_calling")
         if item.get("capabilities", {}).get("vision"):
             caps.add("vision")
-        boot: Dict[str, Any] = next((m for m in bootstrap if m["id"] == mid), {})
+        boot: dict[str, Any] = next((m for m in bootstrap if m["id"] == mid), {})
         records.append(
             ModelRecord(
                 provider=provider,
@@ -365,10 +363,10 @@ def _parse_mistral_models(
 
 
 def _parse_ollama_tags(
-    provider: str, data: Dict[str, Any], bootstrap: List[Dict]
-) -> List[ModelRecord]:
+    provider: str, data: dict[str, Any], bootstrap: list[dict]
+) -> list[ModelRecord]:
     """Ollama /api/tags — local model list."""
-    records: List[ModelRecord] = []
+    records: list[ModelRecord] = []
     for item in data.get("models", []):
         mid = item.get("name", item.get("model", ""))
         if not mid:
@@ -392,15 +390,15 @@ def _parse_ollama_tags(
 
 
 def _parse_cohere_models(
-    provider: str, data: Dict[str, Any], bootstrap: List[Dict]
-) -> List[ModelRecord]:
-    records: List[ModelRecord] = []
+    provider: str, data: dict[str, Any], bootstrap: list[dict]
+) -> list[ModelRecord]:
+    records: list[ModelRecord] = []
     for item in data.get("models", []):
         mid = item.get("name", "")
         if not mid:
             continue
         endpoints = item.get("endpoints", [])
-        caps: Set[str] = set()
+        caps: set[str] = set()
         if "chat" in endpoints or "generate" in endpoints:
             caps.update({"text", "chat"})
         if "embed" in endpoints:
@@ -466,7 +464,7 @@ class CapabilityDiscovery:
         ttl = settings.capability_cache_ttl
         maxsize = len(PROVIDER_CATALOGUE) * 200
         if _CACHETOOLS_AVAILABLE:
-            self._cache: Dict[str, Any] = TTLCache(maxsize=maxsize, ttl=ttl)
+            self._cache: dict[str, Any] = TTLCache(maxsize=maxsize, ttl=ttl)
         else:
             self._cache = TTLCache(maxsize=maxsize, ttl=ttl)  # type: ignore[assignment]
 
@@ -523,7 +521,7 @@ class CapabilityDiscovery:
             # Keep a reference to the task in case callers want to await/cancel
             self._refresh_task = asyncio.create_task(self.refresh_all())
 
-    def get_models(self, provider: str) -> List[ModelRecord]:
+    def get_models(self, provider: str) -> list[ModelRecord]:
         """Return cached models for a provider (bootstrap if not yet fetched)."""
         key = f"models:{provider}"
         cached = self._cache.get(key)
@@ -531,9 +529,9 @@ class CapabilityDiscovery:
             return cached
         return self._bootstrap_models(provider)
 
-    def get_all_models(self) -> List[ModelRecord]:
+    def get_all_models(self) -> list[ModelRecord]:
         """Return all known models across every provider."""
-        out: List[ModelRecord] = []
+        out: list[ModelRecord] = []
         for p in PROVIDER_CATALOGUE:
             out.extend(self.get_models(p))
         return out
@@ -556,7 +554,7 @@ class CapabilityDiscovery:
         else:
             logger.info("All configured API keys found.")
 
-    def get_models_with_capability(self, capability: str) -> List[ModelRecord]:
+    def get_models_with_capability(self, capability: str) -> list[ModelRecord]:
         """Filter models to those supporting a specific capability."""
         return [m for m in self.get_all_models() if m.has_capability(capability)]
 
@@ -565,7 +563,7 @@ class CapabilityDiscovery:
         provider: str,
         capability: str,
         prefer_free: bool = True,
-    ) -> Optional[ModelRecord]:
+    ) -> ModelRecord | None:
         """Return the first suitable model for provider+capability."""
         candidates = [
             m
@@ -637,7 +635,6 @@ class CapabilityDiscovery:
         # logs when absent; use a separate, lower retry count and quieter
         # logging level configurable via environment variables.
         max_retries = self._ollama_retries if provider == "ollama" else self._max_retries_default
-        last_exception = None
 
         for attempt in range(max_retries):
             try:
@@ -654,7 +651,6 @@ class CapabilityDiscovery:
                 else:
                     raise ValueError("Empty model list")
             except Exception as exc:
-                last_exception = exc
                 # Check for auth failures (401/403) - don't retry these
                 if self._is_auth_error(exc):
                     logger.error(
@@ -731,7 +727,7 @@ class CapabilityDiscovery:
             except Exception:
                 pass  # Silently ignore if reporting fails
 
-    async def _fetch_json(self, url: str, api_key: Optional[str], provider: str) -> Dict[str, Any]:  # type: ignore[return-value]
+    async def _fetch_json(self, url: str, api_key: str | None, provider: str) -> dict[str, Any]:  # type: ignore[return-value]
         if not _HTTPX_AVAILABLE:
             raise ImportError("httpx not installed — run: pip install httpx")
 
@@ -753,7 +749,7 @@ class CapabilityDiscovery:
             r.raise_for_status()
             return r.json()
 
-    def _build_headers(self, provider: str, api_key: Optional[str]) -> Dict[str, str]:
+    def _build_headers(self, provider: str, api_key: str | None) -> dict[str, str]:
         if provider == "gemini":
             return {}
         if provider in ("openrouter",):
@@ -772,13 +768,13 @@ class CapabilityDiscovery:
             return {"Authorization": f"Bearer {api_key}"}
         return {}
 
-    def _get_api_key(self, provider: str) -> Optional[str]:
+    def _get_api_key(self, provider: str) -> str | None:
         env_name = PROVIDER_CATALOGUE[provider].get("api_key_env")
         return os.getenv(env_name) if env_name else None
 
-    def _bootstrap_models(self, provider: str) -> List[ModelRecord]:
+    def _bootstrap_models(self, provider: str) -> list[ModelRecord]:
         """Convert BOOTSTRAP_MODELS entries into ModelRecord objects."""
-        out: List[ModelRecord] = []
+        out: list[ModelRecord] = []
         for item in BOOTSTRAP_MODELS.get(provider, []):
             mid = item["id"]
             caps = item.get("capabilities")

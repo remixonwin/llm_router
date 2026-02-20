@@ -1,7 +1,6 @@
-const React = require('react');
-const { Box, Text } = require('ink');
-const { useEffect, useState } = React;
-const api = require('../api');
+import React, { useEffect, useState } from 'react';
+import { Box, Text } from 'ink';
+import * as api from '../api.js';
 
 function Models() {
   const [models, setModels] = useState(null);
@@ -35,4 +34,4 @@ function Models() {
   );
 }
 
-module.exports = Models;
+export default Models;

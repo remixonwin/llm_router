@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
-from typing import Any, List, Dict, Set
+from enum import StrEnum
+from typing import (
+    Any,
+)
 
 try:
     from pydantic import BaseModel, Field, field_validator
@@ -25,19 +28,25 @@ except ImportError:
 
     # Minimal fallback stubs
     class BaseModel:  # type: ignore[no-redef]
-        def __init__(self, **kwargs):
+        def __init__(self, **kwargs: Any) -> None:
             for k, v in kwargs.items():
                 setattr(self, k, v)
 
-        def model_dump(self):
+        def model_dump(self) -> dict[str, Any]:
             return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
 
     class Field:  # type: ignore[no-redef]
-        def __new__(cls, default=None, **kwargs):
+        def __new__(cls, default: Any = None, **kwargs: Any) -> Any:
             return default
 
-    def field_validator(*args, **kwargs):  # type: ignore[misc]
-        def decorator(fn):
+    # type alias to shorten the validator signature for flake8/line-length
+    ValidatorDecorator = Callable[
+        [Callable[..., Any]],
+        Callable[..., Any],
+    ]
+
+    def field_validator(*args: Any, **kwargs: Any) -> ValidatorDecorator:  # type: ignore[no-redef,misc]
+        def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             return fn
 
         return decorator
@@ -48,7 +57,7 @@ except ImportError:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-class TaskType(str, Enum):
+class TaskType(StrEnum):
     TEXT_GENERATION = "text_generation"
     CHAT_COMPLETION = "chat_completion"
     EMBEDDINGS = "embeddings"
@@ -62,17 +71,15 @@ class TaskType(str, Enum):
     UNKNOWN = "unknown"
 
 
-class RoutingStrategy(str, Enum):
+class RoutingStrategy(StrEnum):
     AUTO = "auto"  # balanced: quota + latency + quality
     COST_OPTIMIZED = "cost_optimized"  # maximise remaining free quota
     QUALITY_FIRST = "quality_first"  # highest quality_score wins
     LATENCY_FIRST = "latency_first"  # lowest measured latency wins
     ROUND_ROBIN = "round_robin"  # uniform spread regardless of score
-    CONTEXT_LENGTH = "context_length"  # prefer largest context window
-    VISION_CAPABLE = "vision_capable"  # prefer vision-capable models
 
 
-class CachePolicy(str, Enum):
+class CachePolicy(StrEnum):
     ENABLED = "enabled"  # use cache if hit
     DISABLED = "disabled"  # bypass entirely
     REFRESH = "refresh"  # force re-fetch and repopulate
@@ -105,13 +112,13 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int | None = Field(None, gt=0)
     top_p: float | None = Field(None, ge=0.0, le=1.0)
     stream: bool = False
-    tools: List[Dict[str, Any]] | None = None
-    tool_choice: str | Dict[str, Any] | None = None
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict[str, Any] | None = None
     routing: RoutingOptions | None = None
 
     @field_validator("messages", mode="before")
     @classmethod
-    def normalise_messages(cls, v: Any) -> List[Any]:
+    def normalise_messages(cls, v: Any) -> list[Any]:
         if isinstance(v, list):
             return [m if isinstance(m, dict) else m.model_dump() for m in v]
         return v
@@ -119,7 +126,7 @@ class ChatCompletionRequest(BaseModel):
 
 class EmbeddingRequest(BaseModel):
     model: str | None = None
-    input: str | List[str]
+    input: str | list[str]
     routing: RoutingOptions | None = None
 
 
@@ -128,14 +135,14 @@ class VisionRequest(BaseModel):
     image_url: str | None = None
     image_base64: str | None = None
     question: str | None = None
-    categories: List[str] | None = None
+    categories: list[str] | None = None
     language: str | None = None
     model: str | None = None
     routing: RoutingOptions | None = None
 
     @field_validator("image_url", "image_base64", mode="before")
     @classmethod
-    def at_least_one_image(cls, v: Any, info: Any) -> Any:
+    def at_least_one_image(cls, v: Any, info: Any) -> Any:  # pragma: no cover - simple passthrough
         return v  # cross-field validation handled in __init__
 
 
@@ -198,13 +205,16 @@ class ProviderState:
     consecutive_errors: int = 0
     avg_latency_ms: float = 200.0
     quality_score: float = 1.0
+    # cost & token metrics
+    total_cost_usd: float = 0.0
+    total_tokens: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     # circuit-breaker
     circuit_open: bool = False
     circuit_open_until: datetime | None = None
     # cooldown (e.g. after daily-limit hit)
     cooldown_until: datetime | None = None
-    # authentication failure cooldown
-    auth_failure_until: datetime | None = None
 
     # ── Derived properties ───────────────────────────────────────────────────
 
@@ -230,13 +240,17 @@ class ProviderState:
             return False
         if self.cooldown_until and now < self.cooldown_until:
             return False
-        if self.auth_failure_until and now < self.auth_failure_until:
-            return False
         if self.rpd_remaining <= 0:
             return False
         return True
 
-    def record_success(self, latency_ms: float) -> None:
+    def record_success(
+        self,
+        latency_ms: float,
+        cost_usd: float = 0.0,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+    ) -> None:
         now = datetime.now(UTC)
         hour = now.hour
         self.rpm_used += 1
@@ -246,11 +260,19 @@ class ProviderState:
         self.consecutive_errors = 0
         self.circuit_open = False
 
+        # Accumulate metrics
+        self.total_cost_usd += cost_usd
+        self.prompt_tokens += prompt_tokens
+        self.completion_tokens += completion_tokens
+        self.total_tokens += prompt_tokens + completion_tokens
+
     def record_failure(self, is_rate_limit: bool = False) -> None:
         self.error_count += 1
         self.consecutive_errors += 1
-        if self.consecutive_errors >= 5:
-            self.trip_circuit(60)
+        # Adaptive circuit breaking: increase delay as errors persist
+        if self.consecutive_errors >= 3:
+            delay = 60 * (2 ** (self.consecutive_errors - 3))
+            self.trip_circuit(min(delay, 3600))  # Cap at 1 hour
 
     def trip_circuit(self, seconds: float) -> None:
         from datetime import timedelta

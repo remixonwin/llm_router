@@ -1,7 +1,6 @@
-import requests
-import json
-import base64
+
 import pytest
+import requests
 
 # This file is a convenience script for manual end-to-end checks. It is not a
 # unit test and expects a live router at localhost. When running the test suite

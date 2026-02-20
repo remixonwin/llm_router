@@ -1,4 +1,3 @@
-import asyncio
 import pytest
 
 import llm_router.discovery as discovery_mod
@@ -52,7 +51,7 @@ async def test_remove_model_on_permanent_error(monkeypatch):
 
     model_record = disc.get_models(provider)[0]
 
-    res = await r._try_provider(
+    await r._try_provider(
         provider=provider,
         model=model_record,
         messages=[],

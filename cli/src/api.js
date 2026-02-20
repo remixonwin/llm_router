@@ -1,7 +1,7 @@
-const { request } = require('undici');
+import { request } from 'undici';
+import * as config from './config.js';
 
 const BASE = process.env.LLM_ROUTER_URL || 'http://localhost:8080';
-const config = require('./config');
 
 function _authHeaders() {
   const token = config.getToken();
@@ -10,7 +10,7 @@ function _authHeaders() {
   return headers;
 }
 
-async function get(path) {
+export async function get(path) {
   const url = `${BASE}${path}`;
   const { body } = await request(url, { method: 'GET' });
   const text = await body.text();
@@ -21,7 +21,7 @@ async function get(path) {
   }
 }
 
-async function post(path, data) {
+export async function post(path, data) {
   const url = `${BASE}${path}`;
   const { body } = await request(url, {
     method: 'POST',
@@ -38,7 +38,7 @@ async function post(path, data) {
 
 // Post with streaming support. onChunk will be called with string chunks as they
 // arrive. Returns a Promise that resolves when stream ends.
-async function postStream(path, data, onChunk, onDone, onError) {
+export async function postStream(path, data, onChunk, onDone, onError) {
   const url = `${BASE}${path}`;
   try {
     const { body } = await request(url, {
@@ -116,5 +116,3 @@ async function postStream(path, data, onChunk, onDone, onError) {
     onError && onError(err);
   }
 }
-
-module.exports = { get, post, postStream };

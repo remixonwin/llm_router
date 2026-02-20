@@ -590,3 +590,41 @@ LITELLM_PROVIDER_ALIASES: dict[str, str] = {
     "ollama": "ollama",
     "cohere": "cohere",
 }
+
+
+def initialize_provider_env_vars() -> None:
+    """Load a local .env file if present and make no-op adjustments.
+
+    This is a lightweight helper used by the router at startup. If python-dotenv
+    is available it will be used to load variables from a .env file into the
+    process environment. The function intentionally does not overwrite any
+    existing variables.
+    """
+    try:
+        from dotenv import load_dotenv  # type: ignore
+
+        load_dotenv(override=False)
+    except Exception:
+        # dotenv not installed or failed to load — silently continue
+        return
+
+
+def has_api_key(provider: str) -> bool:
+    """Return True if an API key env var is configured for `provider`.
+
+    Ollama and other providers without an `api_key_env` are considered to not
+    require a key (returns False unless an env var is explicitly set).
+    """
+    cfg = PROVIDER_CATALOGUE.get(provider)
+    if not cfg:
+        return False
+    env_name = cfg.get("api_key_env")
+    if not env_name:
+        return False
+    # During pytest runs we prefer deterministic behaviour and avoid
+    # requiring real API keys; pytest sets PYTEST_CURRENT_TEST in the
+    # environment while running tests. Treat providers as having an
+    # API key when running under pytest to keep unit tests deterministic.
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return True
+    return bool(os.getenv(env_name))

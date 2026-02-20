@@ -2,12 +2,13 @@
   "source_directories": ["src"],
   "search_path": ["src"],
   "exclude": [
-    ".*test.*",
-    ".*venv.*",
-    ".*\\.git.*",
-    ".*__pycache__.*"
+    ".venv",
+    "build",
+    "dist",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "llm_router.egg-info"
   ],
-  "workers": {
-    "enable": false
-  }
+  "strict": false
 }

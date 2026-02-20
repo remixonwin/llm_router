@@ -6,20 +6,18 @@ Run with:  python -m pytest llm_router/tests.py -v
 
 from __future__ import annotations
 
-import asyncio
-import json
 import unittest
-from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
-
+from unittest.mock import AsyncMock, patch
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Helpers / fixtures
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _make_litellm_response(content: str = "Hello!", model: str = "groq/llama-3.3-70b-versatile"):
     """Minimal litellm-like response namespace."""
     import types
+
     resp = types.SimpleNamespace(
         id="test-id",
         object="chat.completion",
@@ -50,28 +48,43 @@ def _make_litellm_response(content: str = "Hello!", model: str = "groq/llama-3.3
 # Config tests
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestConfig(unittest.TestCase):
 
+class TestConfig(unittest.TestCase):
     def test_provider_catalogue_has_all_expected_providers(self):
         from llm_router.config import PROVIDER_CATALOGUE
-        for prov in ["groq", "gemini", "mistral", "openrouter", "together",
-                     "huggingface", "cohere", "openai", "anthropic", "ollama"]:
+
+        for prov in [
+            "groq",
+            "gemini",
+            "mistral",
+            "openrouter",
+            "together",
+            "huggingface",
+            "cohere",
+            "openai",
+            "anthropic",
+            "ollama",
+        ]:
             self.assertIn(prov, PROVIDER_CATALOGUE, f"Missing provider: {prov}")
 
     def test_ollama_has_highest_priority_number(self):
         from llm_router.config import PROVIDER_CATALOGUE
+
         ollama_prio = PROVIDER_CATALOGUE["ollama"]["priority"]
         for name, cfg in PROVIDER_CATALOGUE.items():
             if name != "ollama":
-                self.assertLess(cfg["priority"], ollama_prio,
-                                f"{name}.priority should be < ollama.priority")
+                self.assertLess(
+                    cfg["priority"], ollama_prio, f"{name}.priority should be < ollama.priority"
+                )
 
     def test_cloud_priority_order_excludes_ollama(self):
         from llm_router.config import CLOUD_PRIORITY_ORDER
+
         self.assertNotIn("ollama", CLOUD_PRIORITY_ORDER)
 
     def test_bootstrap_models_have_required_fields(self):
         from llm_router.config import BOOTSTRAP_MODELS
+
         for provider, models in BOOTSTRAP_MODELS.items():
             for m in models:
                 self.assertIn("id", m, f"Missing 'id' in {provider} bootstrap")
@@ -82,29 +95,33 @@ class TestConfig(unittest.TestCase):
 # Model / dataclass tests
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestModels(unittest.TestCase):
 
+class TestModels(unittest.TestCase):
     def test_provider_state_availability(self):
         from llm_router.models import ProviderState
+
         state = ProviderState(name="test", rpm_limit=10, rpd_limit=100)
         self.assertTrue(state.is_available())
         state.rpd_used = 100
-        self.assertFalse(state.is_available())   # daily quota hit
+        self.assertFalse(state.is_available())  # daily quota hit
 
     def test_provider_state_cooldown(self):
         from llm_router.models import ProviderState
+
         state = ProviderState(name="test", rpm_limit=10, rpd_limit=100)
         state.set_cooldown(3600)
         self.assertFalse(state.is_available())
 
     def test_provider_state_circuit_breaker(self):
         from llm_router.models import ProviderState
+
         state = ProviderState(name="test", rpm_limit=10, rpd_limit=100)
         state.trip_circuit(3600)
         self.assertFalse(state.is_available())
 
     def test_record_success_increments_usage(self):
         from llm_router.models import ProviderState
+
         state = ProviderState(name="test", rpm_limit=10, rpd_limit=100)
         state.record_success(200.0)
         self.assertEqual(state.rpd_used, 1)
@@ -112,18 +129,21 @@ class TestModels(unittest.TestCase):
 
     def test_predict_exhaustion_no_usage(self):
         from llm_router.models import ProviderState
+
         state = ProviderState(name="test", rpm_limit=10, rpd_limit=100)
         hours = state.predict_exhaustion_hours()
         self.assertEqual(hours, 24.0)
 
     def test_cache_key_deterministic(self):
         from llm_router.models import CacheKey
+
         k1 = CacheKey.from_request([{"role": "user", "content": "hi"}], "gpt-4", 0.7)
         k2 = CacheKey.from_request([{"role": "user", "content": "hi"}], "gpt-4", 0.7)
         self.assertEqual(k1.messages_hash, k2.messages_hash)
 
     def test_cache_key_different_messages(self):
         from llm_router.models import CacheKey
+
         k1 = CacheKey.from_request([{"role": "user", "content": "hello"}], None, None)
         k2 = CacheKey.from_request([{"role": "user", "content": "world"}], None, None)
         self.assertNotEqual(k1.messages_hash, k2.messages_hash)
@@ -133,10 +153,11 @@ class TestModels(unittest.TestCase):
 # Discovery tests
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestDiscovery(unittest.TestCase):
 
+class TestDiscovery(unittest.TestCase):
     def setUp(self):
         from llm_router.discovery import CapabilityDiscovery
+
         self.disc = CapabilityDiscovery()
 
     def test_bootstrap_models_loaded(self):
@@ -166,11 +187,13 @@ class TestDiscovery(unittest.TestCase):
 
     def test_infer_capabilities_vision_hint(self):
         from llm_router.discovery import _infer_capabilities
+
         caps = _infer_capabilities("llama3.2-vision:latest")
         self.assertIn("vision", caps)
 
     def test_infer_capabilities_embedding_hint(self):
         from llm_router.discovery import _infer_capabilities
+
         caps = _infer_capabilities("text-embedding-3-small")
         self.assertIn("embedding", caps)
         self.assertNotIn("chat", caps)  # embedding-only
@@ -185,10 +208,11 @@ class TestDiscovery(unittest.TestCase):
 # Cache tests
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestCache(unittest.TestCase):
 
+class TestCache(unittest.TestCase):
     def setUp(self):
         from llm_router.cache import ResponseCache
+
         self.cache = ResponseCache()
 
     def test_cache_miss_returns_none(self):
@@ -235,6 +259,7 @@ class TestCache(unittest.TestCase):
 
     def test_semantic_store_cosine(self):
         from llm_router.cache import SemanticStore
+
         store = SemanticStore(threshold=0.9)
         v1 = [1.0, 0.0, 0.0]
         store.add("key1", v1, "test prompt")
@@ -243,9 +268,10 @@ class TestCache(unittest.TestCase):
 
     def test_semantic_store_below_threshold(self):
         from llm_router.cache import SemanticStore
+
         store = SemanticStore(threshold=0.99)
         store.add("key1", [1.0, 0.0, 0.0], "test")
-        result = store.find([0.0, 1.0, 0.0])   # orthogonal
+        result = store.find([0.0, 1.0, 0.0])  # orthogonal
         self.assertIsNone(result)
 
 
@@ -253,14 +279,16 @@ class TestCache(unittest.TestCase):
 # Quota tests
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestQuota(unittest.TestCase):
 
+class TestQuota(unittest.TestCase):
     def setUp(self):
         from llm_router.quota import QuotaManager
+
         self.qm = QuotaManager()
 
     def test_all_providers_initialised(self):
         from llm_router.config import PROVIDER_CATALOGUE
+
         for prov in PROVIDER_CATALOGUE:
             self.assertIn(prov, self.qm.states)
 
@@ -306,15 +334,17 @@ class TestQuota(unittest.TestCase):
 # Router unit tests  (litellm mocked)
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestRouterTaskDetection(unittest.TestCase):
 
+class TestRouterTaskDetection(unittest.TestCase):
     def setUp(self):
         from llm_router.router import IntelligentRouter
+
         self.router = IntelligentRouter()
 
     def test_detect_text(self):
         from llm_router.models import TaskType
         from llm_router.router import IntelligentRouter
+
         r = IntelligentRouter()
         tt = r._detect_task_type({"messages": [{"role": "user", "content": "hello"}]})
         self.assertEqual(tt, TaskType.CHAT_COMPLETION)
@@ -322,6 +352,7 @@ class TestRouterTaskDetection(unittest.TestCase):
     def test_detect_embedding(self):
         from llm_router.models import TaskType
         from llm_router.router import IntelligentRouter
+
         r = IntelligentRouter()
         tt = r._detect_task_type({"input": "some text"})
         self.assertEqual(tt, TaskType.EMBEDDINGS)
@@ -329,6 +360,7 @@ class TestRouterTaskDetection(unittest.TestCase):
     def test_detect_vision_from_image_url_field(self):
         from llm_router.models import TaskType
         from llm_router.router import IntelligentRouter
+
         r = IntelligentRouter()
         tt = r._detect_task_type({"image_url": "https://example.com/img.jpg"})
         self.assertEqual(tt, TaskType.VISION_UNDERSTANDING)
@@ -336,69 +368,87 @@ class TestRouterTaskDetection(unittest.TestCase):
     def test_detect_vision_from_message_content(self):
         from llm_router.models import TaskType
         from llm_router.router import IntelligentRouter
+
         r = IntelligentRouter()
-        tt = r._detect_task_type({
-            "messages": [{"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": "https://example.com/x.jpg"}},
-                {"type": "text", "text": "describe this"},
-            ]}]
-        })
+        tt = r._detect_task_type(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": "https://example.com/x.jpg"},
+                            },
+                            {"type": "text", "text": "describe this"},
+                        ],
+                    }
+                ]
+            }
+        )
         self.assertEqual(tt, TaskType.VISION_UNDERSTANDING)
 
     def test_detect_function_calling(self):
         from llm_router.models import TaskType
         from llm_router.router import IntelligentRouter
+
         r = IntelligentRouter()
-        tt = r._detect_task_type({
-            "messages": [{"role": "user", "content": "what time is it"}],
-            "tools": [{"type": "function", "function": {"name": "get_time"}}],
-        })
+        tt = r._detect_task_type(
+            {
+                "messages": [{"role": "user", "content": "what time is it"}],
+                "tools": [{"type": "function", "function": {"name": "get_time"}}],
+            }
+        )
         self.assertEqual(tt, TaskType.FUNCTION_CALLING)
 
     def test_extract_prompt_text_from_messages(self):
         from llm_router.router import IntelligentRouter
+
         r = IntelligentRouter()
-        text = r._extract_prompt_text({
-            "messages": [{"role": "user", "content": "Hello, router!"}]
-        })
+        text = r._extract_prompt_text({"messages": [{"role": "user", "content": "Hello, router!"}]})
         self.assertIn("Hello, router!", text)
 
     def test_is_daily_limit_detection(self):
         from llm_router.router import IntelligentRouter
+
         self.assertTrue(IntelligentRouter._is_daily_limit(Exception("tokens per day exceeded")))
         self.assertTrue(IntelligentRouter._is_daily_limit(Exception("credit balance depleted")))
         self.assertFalse(IntelligentRouter._is_daily_limit(Exception("connection refused")))
 
     def test_parse_retry_delay_from_text(self):
         from llm_router.router import IntelligentRouter
+
         delay = IntelligentRouter._parse_retry_delay(Exception("retry after 45 seconds"))
         self.assertEqual(delay, 45.0)
 
 
 class TestWeightedChoice(unittest.TestCase):
-
     def test_empty_returns_none(self):
         from llm_router.router import _weighted_choice
+
         self.assertIsNone(_weighted_choice({}))
 
     def test_single_provider_always_chosen(self):
         from llm_router.router import _weighted_choice
+
         for _ in range(10):
             result = _weighted_choice({"groq": 0.9})
             self.assertEqual(result, "groq")
 
     def test_zero_score_falls_to_max(self):
         from llm_router.router import _weighted_choice
+
         result = _weighted_choice({"a": 0.0, "b": 0.0})
         self.assertIn(result, ["a", "b"])
 
     def test_higher_score_wins_more_often(self):
         from llm_router.router import _weighted_choice
+
         counts = {"high": 0, "low": 0}
         for _ in range(500):
             winner = _weighted_choice({"high": 10.0, "low": 1.0})
             counts[winner] += 1
-        # high-score provider should win roughly 10× as often
+        # high-score provider should win roughly 10x as often
         self.assertGreater(counts["high"], counts["low"] * 3)
 
 
@@ -406,12 +456,14 @@ class TestWeightedChoice(unittest.TestCase):
 # Async router tests (mocked litellm)
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestRouterAsync(unittest.IsolatedAsyncioTestCase):
 
+class TestRouterAsync(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         import os
+
         os.environ["GROQ_API_KEY"] = "test-key"
         from llm_router.router import IntelligentRouter
+
         self.router = IntelligentRouter()
         await self.router.start()
 
@@ -434,23 +486,24 @@ class TestRouterAsync(unittest.IsolatedAsyncioTestCase):
     @patch("llm_router.router.acompletion", new_callable=AsyncMock)
     async def test_successful_text_route(self, mock_acomp):
         mock_acomp.return_value = _make_litellm_response("Great answer!")
-        result = await self.router.route({
-            "messages": [{"role": "user", "content": "What is 2+2?"}]
-        })
+        result = await self.router.route(
+            {"messages": [{"role": "user", "content": "What is 2+2?"}]}
+        )
         self.assertIn("routing_metadata", result)
         self.assertIn("provider", result["routing_metadata"])
 
     @patch("llm_router.router.acompletion", new_callable=AsyncMock)
     async def test_fallback_on_rate_limit(self, mock_acomp):
         from litellm import RateLimitError
+
         # First call raises rate limit; second succeeds
         mock_acomp.side_effect = [
             RateLimitError("rate limited", llm_provider="groq", model="llama-3.3"),
             _make_litellm_response("fallback answer"),
         ]
-        result = await self.router.route({
-            "messages": [{"role": "user", "content": "fallback test"}]
-        })
+        result = await self.router.route(
+            {"messages": [{"role": "user", "content": "fallback test"}]}
+        )
         self.assertIn("routing_metadata", result)
 
 

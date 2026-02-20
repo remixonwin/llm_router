@@ -20,19 +20,20 @@ import asyncio
 import logging
 import time
 from collections import deque
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 try:
-    from limits import RateLimitItem, parse  # type: ignore[import]
-    from limits.storage import MemoryStorage  # type: ignore[import]
-    from limits.strategies import MovingWindowRateLimiter  # type: ignore[import]
+    from limits import parse
+    from limits.storage import MemoryStorage
+    from limits.strategies import MovingWindowRateLimiter
+
     _LIMITS_AVAILABLE = True
 except ImportError:
     _LIMITS_AVAILABLE = False
 
-from llm_router.config import PROVIDER_CATALOGUE, settings  # type: ignore[import]
-from llm_router.models import ProviderState  # type: ignore[import]
+from .config import PROVIDER_CATALOGUE, has_api_key, settings
+from .models import ProviderState
 
 logger = logging.getLogger(__name__)
 
@@ -41,15 +42,16 @@ logger = logging.getLogger(__name__)
 # Sliding-window counter (stdlib fallback if `limits` not installed)
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class _SlidingWindowCounter:
     """Thread-safe sliding-window request counter using a deque of timestamps."""
 
     def __init__(self, window_seconds: float = 60.0) -> None:
-        self._window = window_seconds
+        self._window: float = window_seconds
         self._ts: deque[float] = deque()
 
     def record(self) -> None:
-        now = time.monotonic()
+        now: float = time.monotonic()
         self._ts.append(now)
         self._evict(now)
 
@@ -58,7 +60,7 @@ class _SlidingWindowCounter:
         return len(self._ts)
 
     def _evict(self, now: float) -> None:
-        cutoff = now - self._window
+        cutoff: float = now - self._window
         while self._ts and self._ts[0] < cutoff:
             self._ts.popleft()
 
@@ -66,6 +68,7 @@ class _SlidingWindowCounter:
 # ══════════════════════════════════════════════════════════════════════════════
 # QuotaManager
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class QuotaManager:
     """
@@ -105,7 +108,7 @@ class QuotaManager:
 
         self._init_providers()
 
-    # ── Initialisation ─────────────────────────────────────────────────────────
+    # ── Initialisation ──────────────────────────────────────────────────────
 
     def _init_providers(self) -> None:
         for name, cfg in PROVIDER_CATALOGUE.items():
@@ -127,22 +130,29 @@ class QuotaManager:
         self._reset_task = asyncio.create_task(self._reset_loop(), name="quota_reset")
 
     async def stop(self) -> None:
-        if self._reset_task and not self._reset_task.done():  # type: ignore[union-attr]
-            self._reset_task.cancel()  # type: ignore[union-attr]
+        if self._reset_task and not self._reset_task.done():
+            self._reset_task.cancel()
             try:
-                await self._reset_task  # type: ignore[union-attr]
+                await self._reset_task
             except asyncio.CancelledError:
                 pass
 
-    # ── Per-request API ────────────────────────────────────────────────────────
+    # ── Per-request API ─────────────────────────────────────────────────────
 
     def can_accept(self, provider: str) -> bool:
-        """True if provider has both RPM and RPD headroom."""
+        """True if provider has both RPM and RPD headroom and has API key configured."""
         state = self.states.get(provider)
         if state is None:
             return False
         if not state.is_available():
             return False
+
+        # Check if provider has API key configured (skip for ollama which
+        # doesn't need one)
+        if provider != "ollama" and not has_api_key(provider):
+            logger.debug("Skipping %s — no API key configured", provider)
+            return False
+
         # Sliding-window RPM check
         window_count = self._rpm_counters[provider].count()
         if window_count >= state.rpm_limit:
@@ -156,13 +166,26 @@ class QuotaManager:
         if state is None:
             return
         self._rpm_counters[provider].record()
-        # ProviderState.record_success() will increment rpd_used once we get latency
+        # ProviderState.record_success() will increment rpd_used once we get
+        # latency
 
     def record_latency(self, provider: str, latency_ms: float) -> None:
-        """Call after a successful completion to update state metrics."""
+        """Update the provider's average latency using an exponential moving average.
+
+        Uses alpha=0.1 for smoothing. If the existing avg_latency_ms is None or
+        non-positive, the incoming latency is used directly.
+        """
         state = self.states.get(provider)
-        if state:
-            state.record_success(latency_ms)
+        if not state:
+            return
+        # Ensure incoming value is float
+        latency = float(latency_ms)
+        # If no prior latency recorded or non-positive, set directly
+        if state.avg_latency_ms is None or state.avg_latency_ms <= 0.0:
+            state.avg_latency_ms = latency
+            return
+        alpha = 0.1
+        state.avg_latency_ms = (1 - alpha) * state.avg_latency_ms + alpha * latency
 
     def mark_rate_limited(self, provider: str, retry_after: float | None = None) -> None:
         """Set short cooldown after an RPM/RPD error response."""
@@ -181,25 +204,15 @@ class QuotaManager:
             return
         cooldown = float(settings.daily_quota_cooldown_seconds)
         state.set_cooldown(cooldown)
-        state.rpd_used = state.rpd_limit   # pin to limit
+        state.rpd_used = state.rpd_limit  # pin to limit
         logger.warning("Provider %s daily quota exhausted — cooldown %.0fs", provider, cooldown)
-
-    def mark_auth_failed(self, provider: str) -> None:
-        """Set very long cooldown after an authentication failure."""
-        state = self.states.get(provider)
-        if not state:
-            return
-        cooldown = float(settings.auth_failure_cooldown_seconds)
-        now = datetime.now(UTC)
-        state.auth_failure_until = now + timedelta(seconds=cooldown)
-        logger.error("Provider %s authentication failed — long cooldown %.0fs", provider, cooldown)
 
     def mark_error(self, provider: str) -> None:
         state = self.states.get(provider)
         if state:
             state.record_failure()
 
-    # ── Scoring helpers ────────────────────────────────────────────────────────
+    # ── Scoring helpers ─────────────────────────────────────────────────────
 
     def score(
         self,
@@ -219,14 +232,16 @@ class QuotaManager:
         state = self.states.get(provider)
         if not state:
             return 0.0
-        quota_s = state.rpd_remaining / state.rpd_limit if state.rpd_limit > 0 else 0.0
+        quota_s = (
+            state.rpd_remaining / state.rpd_limit if state.rpd_limit > 0 else 0.0
+        )
         latency_s = 1.0 / (1.0 + state.avg_latency_ms / 1_000.0)
         error_s = 1.0 / (1.0 + state.consecutive_errors)
         return (
-            w_quota   * quota_s
+            w_quota * quota_s
             + w_latency * latency_s
             + w_quality * state.quality_score
-            + w_errors  * error_s
+            + w_errors * error_s
         )
 
     def scored_providers(
@@ -238,37 +253,42 @@ class QuotaManager:
         for name in self.states:
             if name in excl:
                 continue
+            # Skip providers without API keys
+            if name != "ollama" and not has_api_key(name):
+                continue
             if available_only and not self.states[name].is_available():
                 continue
             pairs.append((name, self.score(name)))
         return sorted(pairs, key=lambda x: x[1], reverse=True)
 
-    # ── Stats ──────────────────────────────────────────────────────────────────
+    # ── Stats ───────────────────────────────────────────────────────────────
 
     def get_stats(self) -> dict[str, Any]:
         stats: dict[str, Any] = {}
         for name, state in self.states.items():
+            # Check if provider has API key configured
+            has_key = has_api_key(name) if name != "ollama" else True
             stats[name] = {
-                "rpm_used":       state.rpm_used,
-                "rpm_remaining":  state.rpm_remaining,
-                "rpm_window":     self._rpm_counters[name].count(),
-                "rpd_used":       state.rpd_used,
-                "rpd_remaining":  state.rpd_remaining,
-                "rpm_utilization":    round(state.rpm_utilization, 4),
-                "rpd_utilization":    round(state.rpd_utilization, 4),
-                "avg_latency_ms":     round(state.avg_latency_ms, 1),
-                "quality_score":      round(state.quality_score, 4),
-                "error_count":        state.error_count,
+                "rpm_used": state.rpm_used,
+                "rpm_remaining": state.rpm_remaining,
+                "rpm_window": self._rpm_counters[name].count(),
+                "rpd_used": state.rpd_used,
+                "rpd_remaining": state.rpd_remaining,
+                "rpm_utilization": round(state.rpm_utilization, 4),
+                "rpd_utilization": round(state.rpd_utilization, 4),
+                "avg_latency_ms": round(state.avg_latency_ms, 1),
+                "quality_score": round(state.quality_score, 4),
+                "error_count": state.error_count,
                 "consecutive_errors": state.consecutive_errors,
-                "circuit_open":       state.circuit_open,
-                "available":          state.is_available(),
-                "auth_failed":        state.auth_failure_until is not None and datetime.now(UTC) < state.auth_failure_until,
-                "score":              round(self.score(name)),
-                "exhaustion_hours":   round(state.predict_exhaustion_hours(), 2),
+                "circuit_open": state.circuit_open,
+                "available": state.is_available(),
+                "has_api_key": has_key,
+                "score": round(self.score(name), 4),
+                "exhaustion_hours": round(state.predict_exhaustion_hours(), 2),
             }
         return stats
 
-    # ── Reset loop ─────────────────────────────────────────────────────────────
+    # ── Reset loop ──────────────────────────────────────────────────────────
 
     async def _reset_loop(self) -> None:
         """Reset daily quotas at midnight UTC; reset RPM counters every minute."""
@@ -292,9 +312,6 @@ class QuotaManager:
             if state.cooldown_until and now >= state.cooldown_until:
                 state.cooldown_until = None
                 logger.info("Cooldown expired for %s", state.name)
-            if state.auth_failure_until and now >= state.auth_failure_until:
-                state.auth_failure_until = None
-                logger.info("Auth failure cooldown expired for %s", state.name)
             if state.circuit_open and state.circuit_open_until and now >= state.circuit_open_until:
                 state.circuit_open = False
                 state.consecutive_errors = 0

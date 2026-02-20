@@ -35,6 +35,10 @@ curl http://localhost:7544/v1/chat/completions \
 - `GET /v1/models`: List all discovered models.
 - `GET /providers`: View real-time quota & latency stats.
 
+Note: The CLI under `cli/` is experimental and currently has a backend
+integration issue. We exclude the CLI from release packaging until the
+backend CLI bugs are resolved. See `cli/README.md` for local development.
+
 ## ✨ Features
 
 - **Intelligent Routing**: Strategies for `auto`, `cost_optimized`, `quality_first`, and `latency_first`.
@@ -48,47 +52,3 @@ curl http://localhost:7544/v1/chat/completions \
 - `src/llm_router/`: Core logic (Router, Quota Manager, Discovery, Cache).
 - `tests/`: Comprehensive test suite (`uv run pytest`).
 - `pyproject.toml`: Modern dependency management via `uv`.
-
-## 📦 Publishing
-
-This repository ships Python source in `src/llm_router/`. CI builds artifacts and publishes from the main branch. Common publish flows:
-
-- Build source + wheel locally:
-
-```bash
-python3 -m pip install --upgrade build twine
-python3 -m build  # creates files in dist/
-```
-
-- Upload to PyPI (use CI secrets in production):
-
-```bash
-python3 -m twine upload dist/*
-```
-
-- Build and push Docker images to GitHub Container Registry (example):
-
-```bash
-docker build -t ghcr.io/<org>/<repo>:<tag> .
-docker push ghcr.io/<org>/<repo>:<tag>
-```
-
-CI (GitHub Actions) will normally create the packages and publish them using repository secrets (PYPI_API_TOKEN, GITHUB_TOKEN). After pushing a branch the Actions workflow will run and produce status checks.
-
-## ▶️ Monitor CI/CD
-
-- Web: visit your repository's Actions tab to see workflow runs and logs.
-- CLI (GitHub CLI):
-
-```bash
-gh run list --limit 5
-gh run view <run-id> --log
-```
-
-If a workflow fails, open the failing job in Actions to inspect logs, then apply fixes locally and push a new commit. See Troubleshooting below for common issues.
-
-## 🩹 Troubleshooting / Common Fixes
-
-- Lint/test failures: run locally: `python3 -m pip install -e '.[dev]' && ruff --fix src tests && pytest -q`
-- Missing secrets in CI: ensure repository has `PYPI_API_TOKEN` and any provider keys stored as secrets.
-- Packaging errors: ensure `pyproject.toml` has a proper [project] section and `packages = ['src']` if using setuptools.

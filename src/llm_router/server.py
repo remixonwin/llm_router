@@ -17,13 +17,13 @@ All endpoints honour the ``routing`` parameter for strategy selection.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
-import json
 
 # Do NOT load dotenv at module import time in production-ready code. Loading
 # env files should happen at process start (main) so libraries importing this

@@ -1,9 +1,13 @@
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const DIR = path.join(os.homedir(), '.llm-router-cli');
-const FILE = path.join(DIR, 'config.json');
+export const FILE = path.join(DIR, 'config.json');
 
 function _ensureDir() {
   try {
@@ -33,22 +37,20 @@ function _write(obj) {
   }
 }
 
-function getToken() {
+export function getToken() {
   if (process.env.LLM_ROUTER_TOKEN) return process.env.LLM_ROUTER_TOKEN;
   const cfg = _read();
   return cfg.token || null;
 }
 
-function setToken(token) {
+export function setToken(token) {
   const cfg = _read();
   cfg.token = token;
   return _write(cfg);
 }
 
-function clearToken() {
+export function clearToken() {
   const cfg = _read();
   delete cfg.token;
   return _write(cfg);
 }
-
-module.exports = { getToken, setToken, clearToken, FILE };

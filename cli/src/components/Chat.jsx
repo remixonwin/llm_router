@@ -1,9 +1,7 @@
-const React = require('react');
-const { Box, Text, useApp } = require('ink');
-const TextInput = require('ink-text-input').default;
-const { useState } = React;
-const api = require('../api');
-const cfg = require('../config');
+import React, { useState } from 'react';
+import { Box, Text, useApp, useInput } from 'ink';
+import TextInput from 'ink-text-input';
+import * as api from '../api.js';
 
 function Chat() {
   const { exit } = useApp();
@@ -71,11 +69,10 @@ function Chat() {
 
 // Simple component to wait for Enter then exit the Ink app (return to menu handler)
 function BackListener({ onExit }) {
-  const { useInput } = require('ink');
   useInput((input, key) => {
     if (key.return) onExit();
   });
   return React.createElement(Box, null);
 }
 
-module.exports = Chat;
+export default Chat;

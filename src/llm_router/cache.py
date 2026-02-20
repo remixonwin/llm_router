@@ -220,10 +220,11 @@ class ResponseCache:
         messages: list[Any],
         model: str | None,
         temperature: float | None,
+        task_type: str | None = None,
     ) -> str:
         """Deterministic cache key from request parameters."""
         payload = json.dumps(
-            {"m": messages, "model": model, "t": temperature},
+            {"m": messages, "model": model, "t": temperature, "task_type": task_type},
             sort_keys=True,
             default=str,
         )

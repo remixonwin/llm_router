@@ -1,4 +1,3 @@
-import asyncio
 import pytest
 
 import llm_router.router as router_mod
@@ -23,12 +22,10 @@ async def test_litellm_model_normalization(monkeypatch):
     r = router_mod.IntelligentRouter()
 
     # Case 1: model id already contains provider segment (google/...)
-    litellm_model = await r._litellm_call(
-        "openrouter", "google/gemma-3n-e4b-it:free", [], {}
-    )
+    await r._litellm_call("openrouter", "google/gemma-3n-e4b-it:free", [], {})
     assert called.get("model") == "openrouter/google/gemma-3n-e4b-it:free"
 
     # Case 2: bare model id (no slash) should be prefixed
     called.clear()
-    litellm_model = await r._litellm_call("openai", "gpt-4o-mini", [], {})
+    await r._litellm_call("openai", "gpt-4o-mini", [], {})
     assert called.get("model") == "openai/gpt-4o-mini"
