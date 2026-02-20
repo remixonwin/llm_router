@@ -1,34 +1,44 @@
 # Intelligent LLM Router
 
-Backend service that routes LLM requests across providers with quota
-management, discovery, and caching.
+A small, reliable backend that routes requests to multiple LLM providers.
+It handles quota tracking, discovery of available models, and response caching.
 
-Quick start
+Getting started
 
-- Copy env template and add provider API keys: `cp .env.example .env`
-- Run the server (it listens on port 7544 by default).
+- Copy the environment template and add your provider keys:
 
-APIs (minimal)
+  ```bash
+  cp .env.example .env
+  # edit .env and add API keys (e.g. GROQ_API_KEY)
+  ```
 
-- `POST /v1/chat/completions`
-- `POST /v1/embeddings`
-- `POST /v1/vision`
-- `GET /v1/models`
-- `GET /providers`
+- Start locally:
 
-Run locally
+  ```bash
+  python -m llm_router.server
+  # or: python -m uvicorn llm_router.server:app --port 7544
+  ```
 
-- Load env: `cp .env.example .env && edit .env` (set provider API keys)
-- Start locally: `python -m llm_router.server` or `python -m uvicorn llm_router.server:app --port 7544`
+Run in Docker
 
-Run with Docker
+- Build and run:
 
-- Build: `docker build -t llm-router .`
-- Run: `docker run -p 7544:7544 --env-file .env llm-router`
+  ```bash
+  docker build -t llm-router .
+  docker run -p 7544:7544 --env-file .env llm-router
+  ```
 
-Run tests
+API endpoints
 
-- `pytest -q`
+- `POST /v1/chat/completions` — chat/text completions
+- `POST /v1/embeddings` — embeddings
+- `POST /v1/vision` — vision tasks
+- `GET /v1/models` — list discovered models
+- `GET /providers` — provider quota & latency stats
+
+Tests
+
+- Run the test suite locally with `pytest -q`
 
 Project layout
 
