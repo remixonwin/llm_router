@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  llm-router:
+    build: .
+    container_name: llm-router
+    ports:
+      - "7545:7545"
+    environment:
+      - ROUTER_PORT=7545
+      - ROUTER_HOST=0.0.0.0
+      - LOG_LEVEL=INFO
+      # Add your API keys here or use docker secrets
+      # - GROQ_API_KEY=your_key_here
+      # - GEMINI_API_KEY=your_key_here
+      # - OPENAI_API_KEY=your_key_here
+      # - ANTHROPIC_API_KEY=your_key_here
+    volumes:
+      - llm_router_cache:/tmp/llm_router_cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7545/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  llm_router_cache:

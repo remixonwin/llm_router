@@ -9,7 +9,7 @@ a provider name looks it up in these dictionaries.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 
 def _env_bool(key: str, default: bool) -> bool:
@@ -36,6 +36,11 @@ class Settings:
     # Timeouts
     llm_timeout: int = int(os.getenv("LLM_TIMEOUT", "60"))
     discovery_timeout: int = int(os.getenv("DISCOVERY_TIMEOUT", "10"))
+    # Discovery retries
+    discovery_retries: int = int(os.getenv("DISCOVERY_RETRIES", "3"))
+    # Ollama-specific discovery tuning (local fallback)
+    ollama_discovery_retries: int = int(os.getenv("OLLAMA_DISCOVERY_RETRIES", "1"))
+    ollama_discovery_log_level: str = os.getenv("OLLAMA_DISCOVERY_LOG_LEVEL", "DEBUG")
 
     # Cache
     cache_dir: str = os.getenv("CACHE_DIR", "/tmp/llm_router_cache")
@@ -49,15 +54,11 @@ class Settings:
     default_strategy: str = os.getenv("DEFAULT_STRATEGY", "auto")
     max_retries: int = int(os.getenv("MAX_RETRIES", "3"))
     retry_base_delay: float = float(os.getenv("RETRY_BASE_DELAY", "1.0"))
-    daily_quota_cooldown_seconds: int = int(
-        os.getenv("DAILY_QUOTA_COOLDOWN_SECONDS", "3600")
-    )
+    daily_quota_cooldown_seconds: int = int(os.getenv("DAILY_QUOTA_COOLDOWN_SECONDS", "3600"))
     enable_ollama_fallback: bool = _env_bool("ENABLE_OLLAMA_FALLBACK", True)
     model_refresh_interval: int = int(os.getenv("MODEL_REFRESH_INTERVAL", "3600"))
     verbose_litellm: bool = _env_bool("VERBOSE_LITELLM", False)
-    auth_failure_cooldown_seconds: int = int(
-        os.getenv("AUTH_FAILURE_COOLDOWN_SECONDS", "86400")
-    )
+    auth_failure_cooldown_seconds: int = int(os.getenv("AUTH_FAILURE_COOLDOWN_SECONDS", "86400"))
 
     # Ollama
     ollama_base_url: str = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
@@ -99,7 +100,7 @@ settings = Settings()
 #   free_tier     — True if we should prefer this when optimising cost
 #   capabilities  — bootstrap capability set (supplemented by discovery)
 
-PROVIDER_CATALOGUE: Dict[str, Dict[str, Any]] = {
+PROVIDER_CATALOGUE: dict[str, dict[str, Any]] = {
     # ── Cloud free / generous tiers ─────────────────────────────────────────
     "groq": {
         "api_key_env": "GROQ_API_KEY",
@@ -237,7 +238,7 @@ PROVIDER_CATALOGUE: Dict[str, Dict[str, Any]] = {
 
 # ── Static bootstrap model lists (used when live discovery fails) ────────────
 
-BOOTSTRAP_MODELS: Dict[str, List[Dict[str, Any]]] = {
+BOOTSTRAP_MODELS: dict[str, list[dict[str, Any]]] = {
     "groq": [
         {
             "id": "llama-3.3-70b-versatile",
@@ -551,7 +552,7 @@ BOOTSTRAP_MODELS: Dict[str, List[Dict[str, Any]]] = {
 
 # ── Capability → task-type hints ─────────────────────────────────────────────
 
-TASK_CAPABILITY_MAP: Dict[str, str] = {
+TASK_CAPABILITY_MAP: dict[str, str] = {
     "text_generation": "text",
     "chat_completion": "chat",
     "embeddings": "embedding",
@@ -565,13 +566,13 @@ TASK_CAPABILITY_MAP: Dict[str, str] = {
 }
 
 # Preferred cloud provider order for routing (ollama EXCLUDED)
-CLOUD_PRIORITY_ORDER: List[str] = sorted(
+CLOUD_PRIORITY_ORDER: list[str] = sorted(
     [k for k in PROVIDER_CATALOGUE if k != "ollama"],
     key=lambda p: PROVIDER_CATALOGUE[p]["priority"],
 )
 
 # Map from litellm model prefix → our canonical provider name
-LITELLM_PROVIDER_ALIASES: Dict[str, str] = {
+LITELLM_PROVIDER_ALIASES: dict[str, str] = {
     "gpt": "openai",
     "claude": "anthropic",
     "gemini": "gemini",

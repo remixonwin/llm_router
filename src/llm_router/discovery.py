@@ -16,9 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
-from typing import Any, Dict, List, Optional, Set, Union, cast
+from typing import Any, Dict, List, Optional, Set
 
 try:
     import httpx  # type: ignore[import]
@@ -26,6 +25,7 @@ try:
     _HTTPX_AVAILABLE = True
 except ImportError:
     _HTTPX_AVAILABLE = False
+    # httpx is optional; import dynamically later when needed
 
 try:
     from cachetools import TTLCache  # type: ignore[import]
@@ -39,7 +39,7 @@ except ImportError:
         def __init__(self, maxsize: int, ttl: float):
             super().__init__()
             self._ttl = ttl
-            self._times: Dict[Any, float] = {}
+            self._times: dict[Any, float] = {}
 
         def __setitem__(self, k: Any, v: Any) -> None:
             super().__setitem__(k, v)
@@ -144,7 +144,7 @@ _CODING_KEYWORDS: frozenset = frozenset(
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def _infer_capabilities(model_id: str, declared: Optional[Set[str]] = None) -> Set[str]:
+def _infer_capabilities(model_id: str, declared: set[str] | None = None) -> set[str]:
     """Infer capability set from model name, seeded by any declared capabilities."""
     caps: Set[str] = declared.copy() if declared else {"text", "chat"}
     ml = model_id.lower()
@@ -168,18 +168,16 @@ def _infer_capabilities(model_id: str, declared: Optional[Set[str]] = None) -> S
 
 
 def _parse_openai_style(
-    provider: str, data: Dict[str, Any], bootstrap: List[Dict]
-) -> List[ModelRecord]:
+    provider: str, data: dict[str, Any], bootstrap: list[dict[str, Any]]
+) -> list[ModelRecord]:
     """Parse OpenAI-compatible /v1/models response → ModelRecord list."""
-    records: List[ModelRecord] = []
+    records: list[ModelRecord] = []
     models_data = data.get("data", [])
-    bootstrap_ids = {m["id"] for m in bootstrap}
     for item in models_data:
         mid = item.get("id", "")
         if not mid:
             continue
-        # Merge caps from bootstrap if we know this model
-        boot: Dict[str, Any] = next((m for m in bootstrap if m["id"] == mid), {})
+        boot: dict[str, Any] = next((m for m in bootstrap if m["id"] == mid), {})
         caps = _infer_capabilities(mid, boot.get("capabilities"))
         records.append(
             ModelRecord(
@@ -192,13 +190,14 @@ def _parse_openai_style(
                 is_free=PROVIDER_CATALOGUE[provider]["free_tier"],
                 supports_streaming=True,
                 supports_tools="function_calling" in caps,
+                supports_vision="vision" in caps,
             )
         )
     return records
 
 
 def _parse_together_models(
-    provider: str, data: Union[Dict[str, Any], List[Dict]], bootstrap: List[Dict]
+    provider: str, data: Dict[str, Any] | List[Dict], bootstrap: List[Dict]
 ) -> List[ModelRecord]:
     """Parse Together API /v1/models response → ModelRecord list.
 
@@ -247,6 +246,7 @@ def _parse_together_models(
                 is_free=PROVIDER_CATALOGUE[provider]["free_tier"],
                 supports_streaming=True,
                 supports_tools="function_calling" in caps,
+                supports_vision="vision" in caps,
             )
         )
     return records
@@ -277,12 +277,12 @@ def _parse_gemini_models(
                 model_id=mid,
                 full_id=f"{provider}/{mid}",
                 capabilities=caps,
-                context_window=item.get("inputTokenLimit")
-                or boot.get("context", 4_096),
+                context_window=item.get("inputTokenLimit") or boot.get("context", 4_096),
                 rpm_limit=boot.get("rpm", PROVIDER_CATALOGUE[provider]["rpm_limit"]),
                 is_free=True,
                 supports_streaming=True,
                 supports_tools="function_calling" in caps,
+                supports_vision="vision" in caps,
             )
         )
     return records
@@ -322,6 +322,7 @@ def _parse_openrouter_models(
                 is_free=is_free,
                 supports_streaming=True,
                 supports_tools="function_calling" in caps,
+                supports_vision="vision" in caps,
             )
         )
     return records
@@ -347,12 +348,12 @@ def _parse_mistral_models(
                 model_id=mid,
                 full_id=f"{provider}/{mid}",
                 capabilities=caps,
-                context_window=item.get("max_context_length")
-                or boot.get("context", 32_768),
+                context_window=item.get("max_context_length") or boot.get("context", 32_768),
                 rpm_limit=boot.get("rpm", 5),
                 is_free=PROVIDER_CATALOGUE[provider]["free_tier"],
                 supports_streaming=True,
                 supports_tools="function_calling" in caps,
+                supports_vision="vision" in caps,
             )
         )
     return records
@@ -379,6 +380,7 @@ def _parse_ollama_tags(
                 is_free=True,
                 supports_streaming=True,
                 supports_tools=False,
+                supports_vision="vision" in caps,
             )
         )
     return records
@@ -413,6 +415,7 @@ def _parse_cohere_models(
             is_free=PROVIDER_CATALOGUE[provider]["free_tier"],
             supports_streaming=True,
             supports_tools="function_calling" in caps,
+            supports_vision="vision" in caps,
         )
         if "vision" in caps:
             logger.debug("Vision model found in %s: %s", provider, mid)
@@ -466,16 +469,17 @@ class CapabilityDiscovery:
         self._last_refresh: float = 0.0
         self._refresh_interval: float = float(settings.model_refresh_interval)
         self._quota_manager: Any = quota_manager
+        # Make retry settings configurable via Settings for production tuning
+        self._max_retries_default: int = int(settings.discovery_retries)
+        self._ollama_retries: int = int(settings.ollama_discovery_retries)
+        self._ollama_log_level: str = settings.ollama_discovery_log_level.upper()
 
     # ── Public interface ───────────────────────────────────────────────────────
 
     async def refresh_all(self, force: bool = False) -> None:
         """Refresh model lists for all providers (skips if TTL not expired)."""
         async with self._refresh_lock:
-            if (
-                not force
-                and time.monotonic() - self._last_refresh < self._refresh_interval
-            ):
+            if not force and time.monotonic() - self._last_refresh < self._refresh_interval:
                 return
 
             self.validate_config()
@@ -511,7 +515,8 @@ class CapabilityDiscovery:
     async def refresh_if_stale(self) -> None:
         """Non-blocking refresh — only acts when TTL has elapsed."""
         if time.monotonic() - self._last_refresh >= self._refresh_interval:
-            asyncio.create_task(self.refresh_all())
+            # Keep a reference to the task in case callers want to await/cancel
+            self._refresh_task = asyncio.create_task(self.refresh_all())
 
     def get_models(self, provider: str) -> List[ModelRecord]:
         """Return cached models for a provider (bootstrap if not yet fetched)."""
@@ -564,9 +569,7 @@ class CapabilityDiscovery:
         ]
         if not candidates and prefer_free:
             # relax free constraint
-            candidates = [
-                m for m in self.get_models(provider) if m.has_capability(capability)
-            ]
+            candidates = [m for m in self.get_models(provider) if m.has_capability(capability)]
 
         return candidates[0] if candidates else None
 
@@ -624,8 +627,11 @@ class CapabilityDiscovery:
             self._cache[f"models:{provider}"] = self._bootstrap_models(provider)
             return
 
-        # Try with retries for transient failures
-        max_retries = 3
+        # Try with retries for transient failures. Default retry counts come
+        # from configuration. Ollama is a local fallback and should not spam
+        # logs when absent; use a separate, lower retry count and quieter
+        # logging level configurable via environment variables.
+        max_retries = self._ollama_retries if provider == "ollama" else self._max_retries_default
         last_exception = None
 
         for attempt in range(max_retries):
@@ -669,12 +675,29 @@ class CapabilityDiscovery:
                     )
                     await asyncio.sleep(delay)
                 else:
-                    logger.warning(
-                        "Discovery failed for %s after %d attempts (%s) — using bootstrap",
-                        provider,
-                        max_retries,
-                        exc,
-                    )
+                    # Log at the configured severity for Ollama; cloud
+                    # providers keep the warning so operators are notified.
+                    if provider == "ollama":
+                        if self._ollama_log_level == "DEBUG":
+                            logger.debug(
+                                "Discovery failed for %s after %d attempts (%s) — using bootstrap",
+                                provider,
+                                max_retries,
+                                exc,
+                            )
+                        else:
+                            logger.info(
+                                "Discovery failed for %s after %d attempts — using bootstrap",
+                                provider,
+                                max_retries,
+                            )
+                    else:
+                        logger.warning(
+                            "Discovery failed for %s after %d attempts (%s) — using bootstrap",
+                            provider,
+                            max_retries,
+                            exc,
+                        )
 
         # Fall back to bootstrap models
         self._cache[f"models:{provider}"] = self._bootstrap_models(provider)
@@ -703,9 +726,7 @@ class CapabilityDiscovery:
             except Exception:
                 pass  # Silently ignore if reporting fails
 
-    async def _fetch_json(
-        self, url: str, api_key: Optional[str], provider: str
-    ) -> Dict[str, Any]:  # type: ignore[return-value]
+    async def _fetch_json(self, url: str, api_key: Optional[str], provider: str) -> Dict[str, Any]:  # type: ignore[return-value]
         if not _HTTPX_AVAILABLE:
             raise ImportError("httpx not installed — run: pip install httpx")
 
@@ -717,9 +738,12 @@ class CapabilityDiscovery:
             sep = "&" if "?" in url else "?"
             fetch_url = f"{url}{sep}key={api_key}"
 
-        if not _HTTPX_AVAILABLE:
-            raise ImportError("httpx not installed — run: pip install httpx")
-        async with httpx.AsyncClient(timeout=settings.discovery_timeout) as client:
+        # Import httpx locally so static analysis doesn't assume the module
+        # exists at import time (it may be optional in some environments).
+        import importlib
+
+        httpx_mod = importlib.import_module("httpx")
+        async with httpx_mod.AsyncClient(timeout=settings.discovery_timeout) as client:
             r = await client.get(fetch_url, headers=headers)
             r.raise_for_status()
             return r.json()
@@ -766,12 +790,11 @@ class CapabilityDiscovery:
                     full_id=f"{provider}/{mid}",
                     capabilities=caps_set,
                     context_window=item.get("context", 4_096),
-                    rpm_limit=item.get(
-                        "rpm", PROVIDER_CATALOGUE[provider]["rpm_limit"]
-                    ),
+                    rpm_limit=item.get("rpm", PROVIDER_CATALOGUE[provider]["rpm_limit"]),
                     is_free=PROVIDER_CATALOGUE[provider]["free_tier"],
                     supports_streaming=True,
                     supports_tools="function_calling" in caps_set,
+                    supports_vision="vision" in caps_set,
                 )
             )
         return out

@@ -37,42 +37,35 @@ import os
 import random
 import re
 import time
-import types
-from datetime import datetime
-from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 try:
     import litellm  # type: ignore[import]
-    from litellm import acompletion  # type: ignore[import]
     from litellm import APIConnectionError as LiteLLMConnectionError  # type: ignore[import]
+    from litellm import AuthenticationError as LiteLLMAuthError  # type: ignore[import]
     from litellm import RateLimitError as LiteLLMRateLimit  # type: ignore[import]
     from litellm import Timeout as LiteLLMTimeout  # type: ignore[import]
-    from litellm import AuthenticationError as LiteLLMAuthError  # type: ignore[import]
+    from litellm import acompletion  # type: ignore[import]
 
     _LITELLM_AVAILABLE = True
 except ImportError:
     _LITELLM_AVAILABLE = False
     litellm = None  # type: ignore[assignment]
     acompletion = None  # type: ignore[assignment]
-    LiteLLMRateLimit = LiteLLMTimeout = LiteLLMConnectionError = LiteLLMAuthError = (
-        Exception  # type: ignore[assignment]
-    )
+    LiteLLMRateLimit = LiteLLMTimeout = LiteLLMConnectionError = LiteLLMAuthError = Exception  # type: ignore[assignment]
 
 from llm_router.cache import ResponseCache  # type: ignore[import]
 from llm_router.config import (  # type: ignore[import]
     CLOUD_PRIORITY_ORDER,
     PROVIDER_CATALOGUE,
-    TASK_CAPABILITY_MAP,
     settings,
 )
 from llm_router.discovery import CapabilityDiscovery  # type: ignore[import]
 from llm_router.models import (  # type: ignore[import]
-    CacheKey,
     CachePolicy,
     ModelRecord,
     ProviderState,
     RouteDecision,
-    RoutingMetadata,
     RoutingOptions,
     RoutingStrategy,
     TaskType,
@@ -88,14 +81,12 @@ if _LITELLM_AVAILABLE and settings.verbose_litellm:
             sv(True)  # type: ignore[call-arg]
         else:
             try:
-                setattr(litellm, "set_verbose", True)  # type: ignore[attr-defined]
+                litellm.set_verbose = True  # type: ignore[attr-defined]
             except Exception:
                 pass
     except Exception:
         # Don't fail startup if the litellm debug toggle is unavailable.
-        logging.getLogger(__name__).debug(
-            "Could not enable litellm verbose mode; continuing"
-        )
+        logging.getLogger(__name__).debug("Could not enable litellm verbose mode; continuing")
 
 logger = logging.getLogger(__name__)
 
@@ -104,10 +95,8 @@ _VISION_CONTENT_INDICATORS: frozenset = frozenset(["image_url", "data:image"])
 _EMBEDDING_TASK_TYPES: frozenset = frozenset(["embeddings", "embedding"])
 
 # Strategy weight presets  (w_quota, w_latency, w_quality, w_errors)
-_STRATEGY_WEIGHTS: Dict[str, Dict[str, float]] = {
-    RoutingStrategy.AUTO: dict(
-        w_quota=0.50, w_latency=0.25, w_quality=0.15, w_errors=0.10
-    ),
+_STRATEGY_WEIGHTS: dict[str, dict[str, float]] = {
+    RoutingStrategy.AUTO: dict(w_quota=0.50, w_latency=0.25, w_quality=0.15, w_errors=0.10),
     RoutingStrategy.COST_OPTIMIZED: dict(
         w_quota=0.80, w_latency=0.10, w_quality=0.05, w_errors=0.05
     ),
@@ -117,8 +106,12 @@ _STRATEGY_WEIGHTS: Dict[str, Dict[str, float]] = {
     RoutingStrategy.LATENCY_FIRST: dict(
         w_quota=0.20, w_latency=0.60, w_quality=0.10, w_errors=0.10
     ),
-    RoutingStrategy.ROUND_ROBIN: dict(
-        w_quota=0.25, w_latency=0.25, w_quality=0.25, w_errors=0.25
+    RoutingStrategy.ROUND_ROBIN: dict(w_quota=0.25, w_latency=0.25, w_quality=0.25, w_errors=0.25),
+    RoutingStrategy.CONTEXT_LENGTH: dict(
+        w_quota=0.20, w_latency=0.20, w_quality=0.30, w_errors=0.10
+    ),
+    RoutingStrategy.VISION_CAPABLE: dict(
+        w_quota=0.20, w_latency=0.20, w_quality=0.30, w_errors=0.10
     ),
 }
 
@@ -128,7 +121,7 @@ _STRATEGY_WEIGHTS: Dict[str, Dict[str, float]] = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def _weighted_choice(scores: Dict[str, float]) -> Optional[str]:
+def _weighted_choice(scores: dict[str, float]) -> str | None:
     """Probabilistic selection weighted by score — spreads load across providers."""
     if not scores:
         return None
@@ -216,9 +209,9 @@ class IntelligentRouter:
 
     async def route(
         self,
-        request_data: Dict[str, Any],
-        routing_options: Optional[RoutingOptions] = None,
-    ) -> Dict[str, Any]:
+        request_data: dict[str, Any],
+        routing_options: RoutingOptions | None = None,
+    ) -> dict[str, Any]:
         """
         Route a request to the optimal provider.
 
@@ -265,9 +258,7 @@ class IntelligentRouter:
 
         # ── Cache store ────────────────────────────────────────────────────────
         if opts.cache_policy != CachePolicy.DISABLED and cache_key:
-            self.cache.set(
-                cache_key, result, prompt_text=self._extract_prompt_text(request_data)
-            )
+            self.cache.set(cache_key, result, prompt_text=self._extract_prompt_text(request_data))
 
         return result
 
@@ -276,8 +267,8 @@ class IntelligentRouter:
     # ══════════════════════════════════════════════════════════════════════════
 
     async def _route_text(
-        self, request_data: Dict[str, Any], opts: RoutingOptions
-    ) -> Dict[str, Any]:
+        self, request_data: dict[str, Any], opts: RoutingOptions
+    ) -> dict[str, Any]:
         messages = request_data.get("messages", [])
         has_tools = bool(request_data.get("tools"))
         capability = "function_calling" if has_tools else "chat"
@@ -306,8 +297,8 @@ class IntelligentRouter:
     # ══════════════════════════════════════════════════════════════════════════
 
     async def _route_vision(
-        self, request_data: Dict[str, Any], opts: RoutingOptions, task_type: TaskType
-    ) -> Dict[str, Any]:
+        self, request_data: dict[str, Any], opts: RoutingOptions, task_type: TaskType
+    ) -> dict[str, Any]:
         prompt = self._build_vision_prompt(request_data, task_type)
         image_content = self._build_image_content(request_data)
 
@@ -329,13 +320,9 @@ class IntelligentRouter:
             extra_params={"temperature": request_data.get("temperature", 0.2)},
         )
 
-    def _build_image_content(
-        self, request_data: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+    def _build_image_content(self, request_data: dict[str, Any]) -> list[dict[str, Any]]:
         if request_data.get("image_url"):
-            return [
-                {"type": "image_url", "image_url": {"url": request_data["image_url"]}}
-            ]
+            return [{"type": "image_url", "image_url": {"url": request_data["image_url"]}}]
         if request_data.get("image_base64"):
             mime = request_data.get("mime_type", "image/jpeg")
             b64 = request_data["image_base64"]
@@ -345,16 +332,10 @@ class IntelligentRouter:
         for msg in request_data.get("messages", []):
             content = msg.get("content", "") if isinstance(msg, dict) else ""
             if isinstance(content, list):
-                return [
-                    p
-                    for p in content
-                    if isinstance(p, dict) and p.get("type") == "image_url"
-                ]
+                return [p for p in content if isinstance(p, dict) and p.get("type") == "image_url"]
         return []
 
-    def _build_vision_prompt(
-        self, request_data: Dict[str, Any], task_type: TaskType
-    ) -> str:
+    def _build_vision_prompt(self, request_data: dict[str, Any], task_type: TaskType) -> str:
         prompts = {
             TaskType.VISION_CLASSIFY: "Classify this image. Return the top categories with confidence scores.",
             TaskType.VISION_DETECT: "Detect all objects in this image. Provide bounding box descriptions and labels.",
@@ -371,8 +352,8 @@ class IntelligentRouter:
     # ══════════════════════════════════════════════════════════════════════════
 
     async def _route_embedding(
-        self, request_data: Dict[str, Any], opts: RoutingOptions
-    ) -> Dict[str, Any]:
+        self, request_data: dict[str, Any], opts: RoutingOptions
+    ) -> dict[str, Any]:
         text_input = request_data.get("input", "")
         decision = self._select("embedding", opts)
         if decision is None:
@@ -401,14 +382,12 @@ class IntelligentRouter:
                     },
                 }
             except Exception as exc:
-                logger.warning(
-                    "Embedding %s/%s failed: %s", provider, model.model_id, exc
-                )
+                logger.warning("Embedding %s/%s failed: %s", provider, model.model_id, exc)
                 self.quota.mark_error(provider)
 
         raise RuntimeError("All embedding providers failed")
 
-    async def _call_embedding(self, model_id: str, text: Any) -> List[List[float]]:
+    async def _call_embedding(self, model_id: str, text: Any) -> list[list[float]]:
         if not _LITELLM_AVAILABLE:
             raise ImportError("litellm required: pip install litellm")
         texts = [text] if isinstance(text, str) else text
@@ -422,11 +401,11 @@ class IntelligentRouter:
     async def _attempt_with_fallback(
         self,
         primary: RouteDecision,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         capability: str,
         opts: RoutingOptions,
-        extra_params: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        extra_params: dict[str, Any],
+    ) -> dict[str, Any]:
         """Try primary provider, fall back through cloud chain, then Ollama."""
         start = time.monotonic()
         original_provider = primary.provider
@@ -450,12 +429,12 @@ class IntelligentRouter:
         self,
         provider: str,
         model: ModelRecord,
-        messages: List[Dict[str, Any]],
-        extra_params: Dict[str, Any],
+        messages: list[dict[str, Any]],
+        extra_params: dict[str, Any],
         start_time: float,
         original_provider: str,
         strategy: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Attempt a single provider+model.  Handles:
           - RPM rate limits (exponential back-off, up to MAX_RETRIES)
@@ -464,8 +443,14 @@ class IntelligentRouter:
         Returns a response dict on success, None to signal "try next".
         """
         if not self.quota.can_accept(provider):
-            logger.debug("Skipping %s — quota gate", provider)
-            return None
+            # Provider currently blocked by quota gates. In order to ensure
+            # we still detect permanent model-not-found errors (so discovery
+            # can prune unavailable models) attempt one try — the exception
+            # handlers will correctly mark rate-limits and cooldowns.
+            logger.debug(
+                "Provider %s currently rate-limited; attempting once to detect permanent model errors",
+                provider,
+            )
 
         params = {k: v for k, v in extra_params.items() if v is not None}
         # Explicitly pass API key if configured
@@ -479,14 +464,12 @@ class IntelligentRouter:
             if val:
                 params["api_key"] = val
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
 
         for attempt in range(1, settings.max_retries + 1):
             try:
                 self.quota.consume(provider)
-                response = await self._litellm_call(
-                    provider, model.model_id, messages, params
-                )
+                response = await self._litellm_call(provider, model.model_id, messages, params)
                 latency = (time.monotonic() - start_time) * 1000
                 self.quota.record_latency(provider, latency)
                 return self._format_response(
@@ -495,14 +478,32 @@ class IntelligentRouter:
 
             except LiteLLMRateLimit as e:
                 last_exc = e
-                delay = self._parse_retry_delay(e) or (
-                    settings.retry_base_delay * 2**attempt
-                )
+                msg = str(e).lower()
+                # Some providers raise exceptions that are typed as rate-limit
+                # errors but contain permanent model-not-found messages. Detect
+                # those and remove the model from discovery cache.
+                if any(
+                    k in msg
+                    for k in (
+                        "404",
+                        "model_not_found",
+                        "does not exist",
+                        "was removed",
+                        "removed on",
+                        "no longer available",
+                    )
+                ):
+                    logger.warning("%s/%s: model not available — %s", provider, model.model_id, msg)
+                    try:
+                        self.discovery.remove_model(provider, model.model_id)
+                    except Exception:
+                        pass
+                    return None
+
+                delay = self._parse_retry_delay(e) or (settings.retry_base_delay * 2**attempt)
                 if self._is_daily_limit(e):
                     self.quota.mark_daily_exhausted(provider)
-                    logger.warning(
-                        "Daily limit on %s — advancing to next provider", provider
-                    )
+                    logger.warning("Daily limit on %s — advancing to next provider", provider)
                     return None
                 self.quota.mark_rate_limited(provider, delay)
                 if attempt < settings.max_retries:
@@ -541,9 +542,7 @@ class IntelligentRouter:
                         "no longer available",
                     )
                 ):
-                    logger.warning(
-                        "%s/%s: model not available — %s", provider, model.model_id, msg
-                    )
+                    logger.warning("%s/%s: model not available — %s", provider, model.model_id, msg)
                     # Try to remove the model from discovery cache to avoid
                     # selecting it again in the near future.
                     try:
@@ -558,7 +557,7 @@ class IntelligentRouter:
         return None
 
     async def _litellm_call(
-        self, provider: str, model_id: str, messages: List[Any], params: Dict[str, Any]
+        self, provider: str, model_id: str, messages: list[Any], params: dict[str, Any]
     ) -> Any:
         if not _LITELLM_AVAILABLE:
             raise ImportError("litellm not installed — run: pip install litellm")
@@ -610,7 +609,7 @@ class IntelligentRouter:
           2. Remaining cloud providers sorted by score
           3. Ollama (only if enabled and all cloud exhausted)
         """
-        yielded: Set[str] = set()
+        yielded: set[str] = set()
 
         # Primary
         yield primary.provider, primary.model
@@ -618,9 +617,7 @@ class IntelligentRouter:
 
         # Cloud fallbacks
         excluded = set(opts.excluded_providers) | {"ollama"}
-        scored = self.quota.scored_providers(
-            available_only=True, exclude=list(excluded)
-        )
+        scored = self.quota.scored_providers(available_only=True, exclude=list(excluded))
         for provider, _ in scored:
             if provider in yielded:
                 continue
@@ -640,16 +637,16 @@ class IntelligentRouter:
     # Provider selection
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _select(self, capability: str, opts: RoutingOptions) -> Optional[RouteDecision]:
+    def _select(self, capability: str, opts: RoutingOptions) -> RouteDecision | None:
         """Score eligible providers and pick one via weighted random."""
         logger.debug("SELECT CALL: capability=%s opts=%s", capability, opts)
 
-        weights = _STRATEGY_WEIGHTS.get(
-            opts.strategy, _STRATEGY_WEIGHTS[RoutingStrategy.AUTO]
-        )
+        weights = _STRATEGY_WEIGHTS.get(opts.strategy, _STRATEGY_WEIGHTS[RoutingStrategy.AUTO])
         excluded = set(opts.excluded_providers) | {"ollama"}
 
-        candidates: Dict[str, float] = {}
+        candidates: dict[str, float] = {}
+        best_models: dict[str, ModelRecord] = {}
+
         for provider in CLOUD_PRIORITY_ORDER:
             logger.debug("considering provider=%s", provider)
 
@@ -660,17 +657,12 @@ class IntelligentRouter:
                 logger.debug("skipping %s (not in preferred list)", provider)
                 continue
 
-            # Skip providers without API keys to avoid auth failures and long cooldowns
             api_key_env = PROVIDER_CATALOGUE.get(provider, {}).get("api_key_env")
             if api_key_env and not os.getenv(api_key_env):
-                logger.debug(
-                    "skipping %s (no API key configured: %s)", provider, api_key_env
-                )
+                logger.debug("skipping %s (no API key configured: %s)", provider, api_key_env)
                 continue
 
-            if not self.quota.states.get(
-                provider, ProviderState("", 0, 0)
-            ).is_available():
+            if not self.quota.states.get(provider, ProviderState("", 0, 0)).is_available():
                 logger.debug("skipping %s (not available)", provider)
                 continue
 
@@ -678,12 +670,9 @@ class IntelligentRouter:
                 provider, capability, prefer_free=opts.free_tier_only
             )
             if model is None:
-                logger.debug(
-                    "skipping %s (no model for capability=%s)", provider, capability
-                )
+                logger.debug("skipping %s (no model for capability=%s)", provider, capability)
                 continue
 
-            # CRITICAL: Prevent embedding models from being used for chat/vision
             if capability != "embedding" and "embedding" in model.capabilities:
                 logger.debug("skipping %s (model is embedding-only)", provider)
                 continue
@@ -691,20 +680,33 @@ class IntelligentRouter:
                 logger.debug("skipping %s (model lacks embedding capability)", provider)
                 continue
 
-            score = self.quota.score(provider, **weights)
-            logger.debug("provider=%s score=%s", provider, score)
+            base_score = self.quota.score(provider, **weights)
 
-            if score > 0:
-                candidates[provider] = score  # type: ignore[index]
+            if opts.strategy == RoutingStrategy.CONTEXT_LENGTH:
+                model_score = self._score_context_length(model)
+                final_score = base_score * 0.4 + model_score * 0.6
+            elif opts.strategy == RoutingStrategy.VISION_CAPABLE:
+                model_score = self._score_vision_capability(model)
+                final_score = base_score * 0.4 + model_score * 0.6
+            else:
+                final_score = base_score
+
+            logger.debug("provider=%s score=%s (base=%s)", provider, final_score, base_score)
+
+            if final_score > 0:
+                candidates[provider] = final_score
+                best_models[provider] = model
 
         chosen = _weighted_choice(candidates)
         if chosen is None:
             logger.debug("SELECT FAILED: no candidates for %s", capability)
             return None
 
-        model = self.discovery.get_best_model(
-            chosen, capability, prefer_free=opts.free_tier_only
-        )
+        model = best_models.get(chosen)
+        if model is None:
+            model = self.discovery.get_best_model(
+                chosen, capability, prefer_free=opts.free_tier_only
+            )
         if model is None:
             logger.debug("SELECT FAILED: best model None for %s %s", chosen, capability)
             return None
@@ -718,11 +720,25 @@ class IntelligentRouter:
             score=candidates[chosen],
         )
 
+    def _score_context_length(self, model: ModelRecord) -> float:
+        """Score model based on context window size. Higher context = higher score."""
+        max_context = 1_000_000
+        normalized = min(model.context_window / max_context, 1.0)
+        return normalized
+
+    def _score_vision_capability(self, model: ModelRecord) -> float:
+        """Score model based on vision capability. Vision models get higher score."""
+        if model.supports_vision:
+            return 1.0
+        if "vision" in model.capabilities:
+            return 0.9
+        return 0.0
+
     # ══════════════════════════════════════════════════════════════════════════
     # Task-type detection
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _detect_task_type(self, request_data: Dict[str, Any]) -> TaskType:
+    def _detect_task_type(self, request_data: dict[str, Any]) -> TaskType:
         raw = request_data.get("task_type", "")
         if isinstance(raw, TaskType):
             return raw
@@ -765,10 +781,10 @@ class IntelligentRouter:
         latency_ms: float,
         strategy: str,
         original_provider: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Normalise a litellm response into a standard dict."""
         if isinstance(raw, dict):
-            resp: Dict[str, Any] = raw
+            resp: dict[str, Any] = raw
         elif hasattr(raw, "model_dump"):
             resp = dict(raw.model_dump())
         else:
@@ -801,7 +817,7 @@ class IntelligentRouter:
         )
 
     @staticmethod
-    def _parse_retry_delay(exc: Exception) -> Optional[float]:
+    def _parse_retry_delay(exc: Exception) -> float | None:
         for attr in ("retry_info", "retry_delay", "retry_after"):
             try:
                 val = getattr(exc, attr, None)
@@ -822,7 +838,7 @@ class IntelligentRouter:
         return None
 
     @staticmethod
-    def _extract_prompt_text(request_data: Dict[str, Any]) -> str:
+    def _extract_prompt_text(request_data: dict[str, Any]) -> str:
         msgs = request_data.get("messages", [])
         if msgs:
             last = msgs[-1]
@@ -834,7 +850,7 @@ class IntelligentRouter:
     # Observability
     # ══════════════════════════════════════════════════════════════════════════
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         return {
             "providers": self.quota.get_stats(),
             "cache": self.cache.stats,

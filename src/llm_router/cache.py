@@ -27,25 +27,28 @@ import json
 import logging
 import math
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any
 
 try:
     import diskcache  # type: ignore[import]
+
     _DISKCACHE_AVAILABLE = True
 except ImportError:
     _DISKCACHE_AVAILABLE = False
 
 try:
     import xxhash  # type: ignore[import]
+
     def _fast_hash(data: str) -> str:
         return xxhash.xxh64(data.encode()).hexdigest()
 except ImportError:
+
     def _fast_hash(data: str) -> str:  # type: ignore[misc]
         return hashlib.sha256(data.encode()).hexdigest()[:16]
 
+
 from llm_router.config import settings  # type: ignore[import]
-from llm_router.models import CacheKey, CachePolicy  # type: ignore[import]
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +57,12 @@ logger = logging.getLogger(__name__)
 # In-memory fallback cache (used when diskcache is not installed)
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class _SimpleMemCache:
     """TTL-aware dict. Not persistent, but good enough as a fallback."""
 
     def __init__(self, maxsize: int = 2_000, ttl: float = 3600.0) -> None:
-        self._store: Dict[str, Tuple[Any, float]] = {}
+        self._store: dict[str, tuple[Any, float]] = {}
         self._maxsize = maxsize
         self._ttl = ttl
 
@@ -72,7 +76,7 @@ class _SimpleMemCache:
             return default
         return value
 
-    def set(self, key: str, value: Any, expire: Optional[float] = None) -> None:
+    def set(self, key: str, value: Any, expire: float | None = None) -> None:
         if len(self._store) >= self._maxsize:
             # Evict ~10 % LRU by insertion order (approximate)
             to_del = list(self._store.keys())[: max(1, self._maxsize // 10)]  # type: ignore[misc]
@@ -95,10 +99,11 @@ class _SimpleMemCache:
 # Semantic cache vector store
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class _VectorEntry:
-    key: str          # exact cache key for the stored response
-    vector: List[float]
+    key: str  # exact cache key for the stored response
+    vector: list[float]
     prompt_text: str  # truncated for logging
 
 
@@ -111,16 +116,16 @@ class SemanticStore:
     """
 
     def __init__(self, threshold: float = 0.97) -> None:
-        self._entries: List[_VectorEntry] = []
+        self._entries: list[_VectorEntry] = []
         self.threshold = threshold
 
-    def add(self, key: str, vector: List[float], prompt_text: str) -> None:
+    def add(self, key: str, vector: list[float], prompt_text: str) -> None:
         self._entries.append(_VectorEntry(key=key, vector=vector, prompt_text=prompt_text))
 
-    def find(self, query_vector: List[float]) -> Optional[str]:
+    def find(self, query_vector: list[float]) -> str | None:
         """Return the cache key of the nearest neighbour above threshold, or None."""
         best_sim = -1.0
-        best_key: Optional[str] = None
+        best_key: str | None = None
         for entry in self._entries:
             sim = self._cosine(query_vector, entry.vector)
             if sim > best_sim:
@@ -132,10 +137,10 @@ class SemanticStore:
         return None
 
     @staticmethod
-    def _cosine(a: List[float], b: List[float]) -> float:
+    def _cosine(a: list[float], b: list[float]) -> float:
         if len(a) != len(b):
             return 0.0
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
         mag_a = math.sqrt(sum(x * x for x in a))
         mag_b = math.sqrt(sum(y * y for y in b))
         if mag_a == 0 or mag_b == 0:
@@ -149,6 +154,7 @@ class SemanticStore:
 # ══════════════════════════════════════════════════════════════════════════════
 # ResponseCache — unified two-tier API
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class ResponseCache:
     """
@@ -179,6 +185,7 @@ class ResponseCache:
         # Exact-match backend
         if _DISKCACHE_AVAILABLE and self._exact_enabled:
             import os
+
             os.makedirs(settings.cache_dir, exist_ok=True)
             size_bytes = settings.cache_max_size_mb * 1024 * 1024
             self._exact: Any = diskcache.Cache(
@@ -186,11 +193,17 @@ class ResponseCache:
                 size_limit=size_bytes,
                 eviction_policy="least-recently-used",
             )
-            logger.info("Exact cache: diskcache at %s (%d MB)", settings.cache_dir, settings.cache_max_size_mb)
+            logger.info(
+                "Exact cache: diskcache at %s (%d MB)",
+                settings.cache_dir,
+                settings.cache_max_size_mb,
+            )
         else:
             self._exact = _SimpleMemCache(maxsize=5_000, ttl=self._ttl)
             if not _DISKCACHE_AVAILABLE:
-                logger.warning("diskcache not installed — using in-memory exact cache (not persistent)")
+                logger.warning(
+                    "diskcache not installed — using in-memory exact cache (not persistent)"
+                )
 
         # Semantic-match backend
         self._semantic = SemanticStore(threshold=0.97) if self._semantic_enabled else None
@@ -204,9 +217,9 @@ class ResponseCache:
 
     @staticmethod
     def make_key(
-        messages: List[Any],
-        model: Optional[str],
-        temperature: Optional[float],
+        messages: list[Any],
+        model: str | None,
+        temperature: float | None,
     ) -> str:
         """Deterministic cache key from request parameters."""
         payload = json.dumps(
@@ -218,7 +231,7 @@ class ResponseCache:
 
     # ── Read ───────────────────────────────────────────────────────────────────
 
-    def get_exact(self, key: str) -> Optional[Any]:
+    def get_exact(self, key: str) -> Any | None:
         if not self._exact_enabled:
             return None
         val = self._exact.get(key)
@@ -228,7 +241,7 @@ class ResponseCache:
             self._misses += 1
         return val
 
-    def find_semantic(self, embedding: List[float]) -> Optional[str]:
+    def find_semantic(self, embedding: list[float]) -> str | None:
         """Return an exact-cache key if a semantically similar query exists."""
         if not self._semantic_enabled or self._semantic is None:
             return None
@@ -236,7 +249,7 @@ class ResponseCache:
         assert store is not None
         return store.find(embedding)
 
-    def get_by_semantic(self, embedding: List[float]) -> Optional[Any]:
+    def get_by_semantic(self, embedding: list[float]) -> Any | None:
         """Find semantically similar response and return it (or None)."""
         key = self.find_semantic(embedding)
         if key is None:
@@ -253,7 +266,7 @@ class ResponseCache:
         key: str,
         value: Any,
         prompt_text: str = "",
-        embedding: Optional[List[float]] = None,
+        embedding: list[float] | None = None,
     ) -> None:
         if not self._exact_enabled:
             return
@@ -285,7 +298,7 @@ class ResponseCache:
     # ── Stats ──────────────────────────────────────────────────────────────────
 
     @property
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         total = self._hits_exact + self._hits_semantic + self._misses
         hit_rate = (self._hits_exact + self._hits_semantic) / total if total else 0.0
         semantic_len = 0
@@ -294,10 +307,10 @@ class ResponseCache:
             semantic_len = len(store)
         rounded_rate = float(round(hit_rate * 10000) / 10000)
         return {
-            "exact_hits":    self._hits_exact,
+            "exact_hits": self._hits_exact,
             "semantic_hits": self._hits_semantic,
-            "misses":        self._misses,
-            "hit_rate":      rounded_rate,
+            "misses": self._misses,
+            "hit_rate": rounded_rate,
             "semantic_entries": semantic_len,
             "backend": "diskcache" if (_DISKCACHE_AVAILABLE and self._exact_enabled) else "memory",
         }

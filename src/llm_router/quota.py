@@ -20,8 +20,8 @@ import asyncio
 import logging
 import time
 from collections import deque
-from datetime import datetime, timedelta, timezone
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 try:
     from limits import RateLimitItem, parse  # type: ignore[import]
@@ -46,7 +46,7 @@ class _SlidingWindowCounter:
 
     def __init__(self, window_seconds: float = 60.0) -> None:
         self._window = window_seconds
-        self._ts: Deque[float] = deque()
+        self._ts: deque[float] = deque()
 
     def record(self) -> None:
         now = time.monotonic()
@@ -88,13 +88,13 @@ class QuotaManager:
     """
 
     def __init__(self) -> None:
-        self.states: Dict[str, ProviderState] = {}
-        self._rpm_counters: Dict[str, _SlidingWindowCounter] = {}
-        self._reset_task: Optional[asyncio.Task] = None
+        self.states: dict[str, ProviderState] = {}
+        self._rpm_counters: dict[str, _SlidingWindowCounter] = {}
+        self._reset_task: asyncio.Task | None = None
 
         # `limits` integration (optional — provides more accurate token buckets)
-        self._limiter: Optional[Any] = None
-        self._limit_items: Dict[str, Any] = {}
+        self._limiter: Any | None = None
+        self._limit_items: dict[str, Any] = {}
         if _LIMITS_AVAILABLE:
             try:
                 storage = MemoryStorage()
@@ -164,7 +164,7 @@ class QuotaManager:
         if state:
             state.record_success(latency_ms)
 
-    def mark_rate_limited(self, provider: str, retry_after: Optional[float] = None) -> None:
+    def mark_rate_limited(self, provider: str, retry_after: float | None = None) -> None:
         """Set short cooldown after an RPM/RPD error response."""
         state = self.states.get(provider)
         if not state:
@@ -190,7 +190,7 @@ class QuotaManager:
         if not state:
             return
         cooldown = float(settings.auth_failure_cooldown_seconds)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         state.auth_failure_until = now + timedelta(seconds=cooldown)
         logger.error("Provider %s authentication failed — long cooldown %.0fs", provider, cooldown)
 
@@ -230,11 +230,11 @@ class QuotaManager:
         )
 
     def scored_providers(
-        self, available_only: bool = True, exclude: Optional[List[str]] = None
-    ) -> List[Tuple[str, float]]:
+        self, available_only: bool = True, exclude: list[str] | None = None
+    ) -> list[tuple[str, float]]:
         """Return [(provider, score)] sorted descending, ollama excluded."""
         excl = set(exclude or []) | {"ollama"}
-        pairs: List[Tuple[str, float]] = []
+        pairs: list[tuple[str, float]] = []
         for name in self.states:
             if name in excl:
                 continue
@@ -245,8 +245,8 @@ class QuotaManager:
 
     # ── Stats ──────────────────────────────────────────────────────────────────
 
-    def get_stats(self) -> Dict[str, Any]:
-        stats: Dict[str, Any] = {}
+    def get_stats(self) -> dict[str, Any]:
+        stats: dict[str, Any] = {}
         for name, state in self.states.items():
             stats[name] = {
                 "rpm_used":       state.rpm_used,
@@ -262,7 +262,7 @@ class QuotaManager:
                 "consecutive_errors": state.consecutive_errors,
                 "circuit_open":       state.circuit_open,
                 "available":          state.is_available(),
-                "auth_failed":        state.auth_failure_until is not None and datetime.now(timezone.utc) < state.auth_failure_until,
+                "auth_failed":        state.auth_failure_until is not None and datetime.now(UTC) < state.auth_failure_until,
                 "score":              round(self.score(name)),
                 "exhaustion_hours":   round(state.predict_exhaustion_hours(), 2),
             }
@@ -276,7 +276,7 @@ class QuotaManager:
             try:
                 await asyncio.sleep(60)
                 self._reset_rpm()
-                now_utc = datetime.now(timezone.utc)
+                now_utc = datetime.now(UTC)
                 if now_utc.hour == 0 and now_utc.minute == 0:
                     self._reset_daily()
             except asyncio.CancelledError:
@@ -287,7 +287,7 @@ class QuotaManager:
     def _reset_rpm(self) -> None:
         """The sliding-window counters are self-expiring; nothing to do here.
         We do, however, clear expired cooldowns."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for state in self.states.values():
             if state.cooldown_until and now >= state.cooldown_until:
                 state.cooldown_until = None

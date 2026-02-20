@@ -12,22 +12,25 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, List, Dict, Set
 
 try:
     from pydantic import BaseModel, Field, field_validator
+
     _PYDANTIC_AVAILABLE = True
 except ImportError:
     _PYDANTIC_AVAILABLE = False
+
     # Minimal fallback stubs
     class BaseModel:  # type: ignore[no-redef]
         def __init__(self, **kwargs):
             for k, v in kwargs.items():
                 setattr(self, k, v)
+
         def model_dump(self):
-            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+            return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
 
     class Field:  # type: ignore[no-redef]
         def __new__(cls, default=None, **kwargs):
@@ -36,6 +39,7 @@ except ImportError:
     def field_validator(*args, **kwargs):  # type: ignore[misc]
         def decorator(fn):
             return fn
+
         return decorator
 
 
@@ -45,31 +49,33 @@ except ImportError:
 
 
 class TaskType(str, Enum):
-    TEXT_GENERATION     = "text_generation"
-    CHAT_COMPLETION     = "chat_completion"
-    EMBEDDINGS          = "embeddings"
-    VISION_CLASSIFY     = "vision_classify"
-    VISION_DETECT       = "vision_detect"
-    VISION_OCR          = "vision_ocr"
-    VISION_QA           = "vision_qa"
-    VISION_CAPTION      = "vision_caption"
-    VISION_UNDERSTANDING= "vision_understanding"
-    FUNCTION_CALLING    = "function_calling"
-    UNKNOWN             = "unknown"
+    TEXT_GENERATION = "text_generation"
+    CHAT_COMPLETION = "chat_completion"
+    EMBEDDINGS = "embeddings"
+    VISION_CLASSIFY = "vision_classify"
+    VISION_DETECT = "vision_detect"
+    VISION_OCR = "vision_ocr"
+    VISION_QA = "vision_qa"
+    VISION_CAPTION = "vision_caption"
+    VISION_UNDERSTANDING = "vision_understanding"
+    FUNCTION_CALLING = "function_calling"
+    UNKNOWN = "unknown"
 
 
 class RoutingStrategy(str, Enum):
-    AUTO          = "auto"        # balanced: quota + latency + quality
-    COST_OPTIMIZED= "cost_optimized"   # maximise remaining free quota
-    QUALITY_FIRST = "quality_first"    # highest quality_score wins
-    LATENCY_FIRST = "latency_first"    # lowest measured latency wins
-    ROUND_ROBIN   = "round_robin"      # uniform spread regardless of score
+    AUTO = "auto"  # balanced: quota + latency + quality
+    COST_OPTIMIZED = "cost_optimized"  # maximise remaining free quota
+    QUALITY_FIRST = "quality_first"  # highest quality_score wins
+    LATENCY_FIRST = "latency_first"  # lowest measured latency wins
+    ROUND_ROBIN = "round_robin"  # uniform spread regardless of score
+    CONTEXT_LENGTH = "context_length"  # prefer largest context window
+    VISION_CAPABLE = "vision_capable"  # prefer vision-capable models
 
 
 class CachePolicy(str, Enum):
-    ENABLED  = "enabled"   # use cache if hit
+    ENABLED = "enabled"  # use cache if hit
     DISABLED = "disabled"  # bypass entirely
-    REFRESH  = "refresh"   # force re-fetch and repopulate
+    REFRESH = "refresh"  # force re-fetch and repopulate
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -80,28 +86,28 @@ class CachePolicy(str, Enum):
 class RoutingOptions(BaseModel):
     strategy: RoutingStrategy = RoutingStrategy.AUTO
     free_tier_only: bool = False
-    preferred_providers: List[str] = Field(default_factory=list)
-    excluded_providers: List[str] = Field(default_factory=list)
+    preferred_providers: list[str] = Field(default_factory=list)
+    excluded_providers: list[str] = Field(default_factory=list)
     cache_policy: CachePolicy = CachePolicy.ENABLED
-    require_capability: Optional[str] = None
+    require_capability: str | None = None
 
 
 class Message(BaseModel):
     role: str
-    content: Union[str, List[Any]]
-    name: Optional[str] = None
+    content: str | list[Any]
+    name: str | None = None
 
 
 class ChatCompletionRequest(BaseModel):
-    model: Optional[str] = None
-    messages: List[Union[Message, Dict[str, Any]]]
-    temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
-    max_tokens: Optional[int] = Field(None, gt=0)
-    top_p: Optional[float] = Field(None, ge=0.0, le=1.0)
+    model: str | None = None
+    messages: list[Message | dict[str, Any]]
+    temperature: float | None = Field(None, ge=0.0, le=2.0)
+    max_tokens: int | None = Field(None, gt=0)
+    top_p: float | None = Field(None, ge=0.0, le=1.0)
     stream: bool = False
-    tools: Optional[List[Dict[str, Any]]] = None
-    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
-    routing: Optional[RoutingOptions] = None
+    tools: List[Dict[str, Any]] | None = None
+    tool_choice: str | Dict[str, Any] | None = None
+    routing: RoutingOptions | None = None
 
     @field_validator("messages", mode="before")
     @classmethod
@@ -112,20 +118,20 @@ class ChatCompletionRequest(BaseModel):
 
 
 class EmbeddingRequest(BaseModel):
-    model: Optional[str] = None
-    input: Union[str, List[str]]
-    routing: Optional[RoutingOptions] = None
+    model: str | None = None
+    input: str | List[str]
+    routing: RoutingOptions | None = None
 
 
 class VisionRequest(BaseModel):
     task_type: TaskType = TaskType.VISION_UNDERSTANDING
-    image_url: Optional[str] = None
-    image_base64: Optional[str] = None
-    question: Optional[str] = None
-    categories: Optional[List[str]] = None
-    language: Optional[str] = None
-    model: Optional[str] = None
-    routing: Optional[RoutingOptions] = None
+    image_url: str | None = None
+    image_base64: str | None = None
+    question: str | None = None
+    categories: List[str] | None = None
+    language: str | None = None
+    model: str | None = None
+    routing: RoutingOptions | None = None
 
     @field_validator("image_url", "image_base64", mode="before")
     @classmethod
@@ -140,9 +146,9 @@ class RoutingMetadata(BaseModel):
     latency_ms: float
     cache_hit: bool = False
     cost_usd: float = 0.0
-    quota_remaining: Optional[int] = None
+    quota_remaining: int | None = None
     fallback: bool = False
-    original_provider: Optional[str] = None
+    original_provider: str | None = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -153,16 +159,18 @@ class RoutingMetadata(BaseModel):
 @dataclass
 class ModelRecord:
     """A single model as discovered from a provider."""
+
     provider: str
-    model_id: str                               # bare id (no provider/ prefix)
-    full_id: str                                # provider/model_id
-    capabilities: Set[str] = field(default_factory=set)
+    model_id: str  # bare id (no provider/ prefix)
+    full_id: str  # provider/model_id
+    capabilities: set[str] = field(default_factory=set)
     context_window: int = 4_096
     rpm_limit: int = 60
     is_free: bool = True
     supports_streaming: bool = True
     supports_tools: bool = False
-    discovered_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    supports_vision: bool = False
+    discovered_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def litellm_id(self) -> str:
@@ -176,6 +184,7 @@ class ModelRecord:
 @dataclass
 class ProviderState:
     """Runtime quota and health state for a provider."""
+
     name: str
     rpm_limit: int
     rpd_limit: int
@@ -183,7 +192,7 @@ class ProviderState:
     rpm_used: int = 0
     rpd_used: int = 0
     # rolling hourly bucket (index = hour-of-day)
-    hourly_usage: List[int] = field(default_factory=lambda: [0] * 24)
+    hourly_usage: list[int] = field(default_factory=lambda: [0] * 24)
     # performance metrics
     error_count: int = 0
     consecutive_errors: int = 0
@@ -191,11 +200,11 @@ class ProviderState:
     quality_score: float = 1.0
     # circuit-breaker
     circuit_open: bool = False
-    circuit_open_until: Optional[datetime] = None
+    circuit_open_until: datetime | None = None
     # cooldown (e.g. after daily-limit hit)
-    cooldown_until: Optional[datetime] = None
+    cooldown_until: datetime | None = None
     # authentication failure cooldown
-    auth_failure_until: Optional[datetime] = None
+    auth_failure_until: datetime | None = None
 
     # ── Derived properties ───────────────────────────────────────────────────
 
@@ -216,7 +225,7 @@ class ProviderState:
         return self.rpd_used / self.rpd_limit if self.rpd_limit > 0 else 0.0
 
     def is_available(self) -> bool:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if self.circuit_open and self.circuit_open_until and now < self.circuit_open_until:
             return False
         if self.cooldown_until and now < self.cooldown_until:
@@ -228,7 +237,7 @@ class ProviderState:
         return True
 
     def record_success(self, latency_ms: float) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         hour = now.hour
         self.rpm_used += 1
         self.rpd_used += 1
@@ -245,16 +254,18 @@ class ProviderState:
 
     def trip_circuit(self, seconds: float) -> None:
         from datetime import timedelta
+
         self.circuit_open = True
-        self.circuit_open_until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+        self.circuit_open_until = datetime.now(UTC) + timedelta(seconds=seconds)
 
     def set_cooldown(self, seconds: float) -> None:
         from datetime import timedelta
-        self.cooldown_until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+
+        self.cooldown_until = datetime.now(UTC) + timedelta(seconds=seconds)
 
     def predict_exhaustion_hours(self) -> float:
         """Estimate hours until daily quota runs out based on hourly usage pattern."""
-        current_hour = datetime.now(timezone.utc).hour
+        current_hour = datetime.now(UTC).hour
         non_zero = [h for h in self.hourly_usage if h > 0]
         avg_per_hour = sum(non_zero) / len(non_zero) if non_zero else 1.0
         remaining = float(self.rpd_remaining)
@@ -278,18 +289,21 @@ class RouteDecision:
     strategy: str
     score: float
     is_fallback: bool = False
-    fallback_chain: List[str] = field(default_factory=list)
+    fallback_chain: list[str] = field(default_factory=list)
 
 
 @dataclass
 class CacheKey:
     """Deterministic cache key for a completion request."""
+
     messages_hash: str
-    model: Optional[str]
-    temperature: Optional[float]
+    model: str | None
+    temperature: float | None
 
     @classmethod
-    def from_request(cls, messages: List[Any], model: Optional[str], temperature: Optional[float]) -> "CacheKey":
+    def from_request(
+        cls, messages: list[Any], model: str | None, temperature: float | None
+    ) -> CacheKey:
         payload = json.dumps({"messages": messages, "model": model}, sort_keys=True, default=str)
         h = hashlib.sha256(payload.encode()).hexdigest()[:24]
         return cls(messages_hash=h, model=model, temperature=temperature)

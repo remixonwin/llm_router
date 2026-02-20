@@ -20,36 +20,29 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any
 
 # Do NOT load dotenv at module import time in production-ready code. Loading
 # env files should happen at process start (main) so libraries importing this
 # module in other contexts don't have side effects.
-
-from fastapi import FastAPI, HTTPException, Request, status  # type: ignore[import]
-from fastapi import Header, Depends
+from fastapi import Depends, FastAPI, Header, HTTPException, Request  # type: ignore[import]
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import]
-from fastapi.responses import JSONResponse, StreamingResponse  # type: ignore[import]
+from fastapi.responses import JSONResponse  # type: ignore[import]
 from pydantic import BaseModel, Field  # type: ignore[import]
 
 from llm_router.config import PROVIDER_CATALOGUE, settings  # type: ignore[import]
 from llm_router.models import (  # type: ignore[import]
-    CachePolicy,
-    ChatCompletionRequest,
-    EmbeddingRequest,
     RoutingOptions,
-    RoutingStrategy,
     TaskType,
-    VisionRequest,
 )
 from llm_router.router import IntelligentRouter  # type: ignore[import]
 
 logger = logging.getLogger(__name__)
 
 # ── Singleton router instance ─────────────────────────────────────────────────
-_router: Optional[IntelligentRouter] = None
+_router: IntelligentRouter | None = None
 
 
 def get_router() -> IntelligentRouter:
@@ -58,7 +51,7 @@ def get_router() -> IntelligentRouter:
     return _router
 
 
-def _require_admin_token(x_admin_token: Optional[str] = Header(None)) -> None:
+def _require_admin_token(x_admin_token: str | None = Header(None)) -> None:
     """Admin auth dependency.
 
     Currently a no-op to keep admin endpoints open for testing and local
@@ -128,32 +121,32 @@ app.add_middleware(
 
 
 class ChatRequest(BaseModel):
-    model: Optional[str] = None
-    messages: List[Any]
-    temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
-    max_tokens: Optional[int] = Field(None, gt=0)
-    top_p: Optional[float] = Field(None, ge=0.0, le=1.0)
+    model: str | None = None
+    messages: list[Any]
+    temperature: float | None = Field(None, ge=0.0, le=2.0)
+    max_tokens: int | None = Field(None, gt=0)
+    top_p: float | None = Field(None, ge=0.0, le=1.0)
     stream: bool = False
-    tools: Optional[List[Dict[str, Any]]] = None
-    tool_choice: Optional[Union[str, Dict]] = None
-    routing: Optional[RoutingOptions] = None
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict | None = None
+    routing: RoutingOptions | None = None
 
 
 class EmbedRequest(BaseModel):
-    model: Optional[str] = None
-    input: Union[str, List[str]]
-    routing: Optional[RoutingOptions] = None
+    model: str | None = None
+    input: str | list[str]
+    routing: RoutingOptions | None = None
 
 
 class VisionTaskRequest(BaseModel):
     task_type: TaskType = TaskType.VISION_UNDERSTANDING
-    image_url: Optional[str] = None
-    image_base64: Optional[str] = None
-    question: Optional[str] = None
-    categories: Optional[List[str]] = None
-    language: Optional[str] = None
-    model: Optional[str] = None
-    routing: Optional[RoutingOptions] = None
+    image_url: str | None = None
+    image_base64: str | None = None
+    question: str | None = None
+    categories: list[str] | None = None
+    language: str | None = None
+    model: str | None = None
+    routing: RoutingOptions | None = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -162,7 +155,7 @@ class VisionTaskRequest(BaseModel):
 
 
 @app.get("/", include_in_schema=False)
-async def root() -> Dict[str, str]:
+async def root() -> dict[str, str]:
     return {"status": "ok", "service": "Intelligent LLM Router v2"}
 
 
@@ -170,7 +163,7 @@ async def root() -> Dict[str, str]:
 
 
 @app.get("/health", tags=["Observability"])
-async def health() -> Dict[str, Any]:
+async def health() -> dict[str, Any]:
     r = get_router()
     stats = r.quota.get_stats()
     available = [p for p, s in stats.items() if s["available"]]
@@ -185,7 +178,7 @@ async def health() -> Dict[str, Any]:
 
 
 @app.get("/v1/models", tags=["Discovery"])
-async def list_models() -> Dict[str, Any]:
+async def list_models() -> dict[str, Any]:
     r = get_router()
     all_models = r.discovery.get_all_models()
     return {
@@ -205,7 +198,7 @@ async def list_models() -> Dict[str, Any]:
 
 
 @app.get("/v1/models/{provider}", tags=["Discovery"])
-async def list_provider_models(provider: str) -> Dict[str, Any]:
+async def list_provider_models(provider: str) -> dict[str, Any]:
     if provider not in PROVIDER_CATALOGUE:
         raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
     r = get_router()
@@ -231,7 +224,7 @@ async def list_provider_models(provider: str) -> Dict[str, Any]:
 async def chat_completions(request: ChatRequest) -> Any:
     r = get_router()
     try:
-        request_data: Dict[str, Any] = {
+        request_data: dict[str, Any] = {
             "messages": [
                 m if isinstance(m, dict) else m.model_dump() for m in request.messages
             ],
@@ -286,7 +279,7 @@ async def vision(request: VisionTaskRequest) -> Any:
             detail="Provide either image_url or image_base64",
         )
     try:
-        request_data: Dict[str, Any] = {
+        request_data: dict[str, Any] = {
             "task_type": request.task_type.value,
             "image_url": request.image_url,
             "image_base64": request.image_base64,
@@ -307,7 +300,7 @@ async def vision(request: VisionTaskRequest) -> Any:
 
 
 @app.get("/providers", tags=["Observability"])
-async def provider_stats() -> Dict[str, Any]:
+async def provider_stats() -> dict[str, Any]:
     r = get_router()
     return {
         "providers": r.quota.get_stats(),
@@ -316,7 +309,7 @@ async def provider_stats() -> Dict[str, Any]:
 
 
 @app.get("/providers/{provider}", tags=["Observability"])
-async def single_provider_stats(provider: str) -> Dict[str, Any]:
+async def single_provider_stats(provider: str) -> dict[str, Any]:
     r = get_router()
     stats = r.quota.get_stats()
     if provider not in stats:
@@ -328,21 +321,21 @@ async def single_provider_stats(provider: str) -> Dict[str, Any]:
 
 
 @app.post("/admin/refresh", tags=["Admin"])
-async def force_refresh(admin: None = Depends(_require_admin_token)) -> Dict[str, str]:
+async def force_refresh(admin: None = Depends(_require_admin_token)) -> dict[str, str]:
     r = get_router()
     await r.discovery.refresh_all(force=True)
     return {"status": "ok", "message": "Model capabilities refreshed"}
 
 
 @app.post("/admin/cache/clear", tags=["Admin"])
-async def clear_cache(admin: None = Depends(_require_admin_token)) -> Dict[str, str]:
+async def clear_cache(admin: None = Depends(_require_admin_token)) -> dict[str, str]:
     r = get_router()
     r.cache.clear()
     return {"status": "ok", "message": "Response cache cleared"}
 
 
 @app.post("/admin/quotas/reset", tags=["Admin"])
-async def reset_quotas(admin: None = Depends(_require_admin_token)) -> Dict[str, str]:
+async def reset_quotas(admin: None = Depends(_require_admin_token)) -> dict[str, str]:
     r = get_router()
     for state in r.quota.states.values():
         state.rpd_used = 0
@@ -356,7 +349,7 @@ async def reset_quotas(admin: None = Depends(_require_admin_token)) -> Dict[str,
 
 
 @app.get("/stats", tags=["Observability"])
-async def full_stats() -> Dict[str, Any]:
+async def full_stats() -> dict[str, Any]:
     """Combined stats: quotas + cache + model counts."""
     r = get_router()
     return r.get_stats()
@@ -382,8 +375,9 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 
 
 def main():
-    import uvicorn  # type: ignore[import]
     import argparse
+
+    import uvicorn  # type: ignore[import]
     from dotenv import load_dotenv  # type: ignore[import]
 
     # Load local .env only when starting via the CLI entrypoint. This avoids
@@ -414,8 +408,8 @@ def main():
 
     if args.kill:
         # Import here to avoid circular dependency or unnecessary imports if not used
-        import subprocess
         import signal
+        import subprocess
 
         try:
             output = subprocess.check_output(
