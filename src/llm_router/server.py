@@ -23,13 +23,14 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
+import json
 
 # Do NOT load dotenv at module import time in production-ready code. Loading
 # env files should happen at process start (main) so libraries importing this
 # module in other contexts don't have side effects.
 from fastapi import Depends, FastAPI, Header, HTTPException, Request  # type: ignore[import]
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import]
-from fastapi.responses import JSONResponse  # type: ignore[import]
+from fastapi.responses import JSONResponse, StreamingResponse  # type: ignore[import]
 from pydantic import BaseModel, Field  # type: ignore[import]
 
 from llm_router.config import PROVIDER_CATALOGUE, settings  # type: ignore[import]
@@ -225,9 +226,7 @@ async def chat_completions(request: ChatRequest) -> Any:
     r = get_router()
     try:
         request_data: dict[str, Any] = {
-            "messages": [
-                m if isinstance(m, dict) else m.model_dump() for m in request.messages
-            ],
+            "messages": [m if isinstance(m, dict) else m.model_dump() for m in request.messages],
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
             "top_p": request.top_p,
@@ -237,6 +236,45 @@ async def chat_completions(request: ChatRequest) -> Any:
         }
         if request.model:
             request_data["model"] = request.model
+
+        # If the client requested streaming, route with stream and return a
+        # StreamingResponse that yields SSE-like `data: ...` lines. The router
+        # will attempt to return an async iterable when `stream=True`.
+        if request.stream:
+
+            async def event_stream():
+                try:
+                    async_iterable = await r.route(request_data, request.routing)
+                    # If the router returned an async generator/iterable,
+                    # iterate and yield SSE `data:` chunks. Otherwise, emit
+                    # the full JSON as a single event.
+                    if hasattr(async_iterable, "__aiter__"):
+                        async for chunk in async_iterable:
+                            # Normalize chunk to string
+                            try:
+                                s = chunk if isinstance(chunk, str) else json.dumps(chunk)
+                            except Exception:
+                                s = str(chunk)
+                            yield f"data: {s}\n\n"
+                    else:
+                        # Non-iterable result: return as single event
+                        try:
+                            s = json.dumps(async_iterable)
+                        except Exception:
+                            s = str(async_iterable)
+                        yield f"data: {s}\n\n"
+                except Exception as e:
+                    # Emit error event. Avoid leaking deep internals unless
+                    # explicitly enabled via VERBOSE_LITELLM_INTERNALS.
+                    if settings.verbose_litellm_internals:
+                        err_msg = str(e)
+                    else:
+                        first_arg = e.args[0] if getattr(e, "args", None) else None
+                        short = str(first_arg) if first_arg else ""
+                        err_msg = f"{type(e).__name__}: {short}"
+                    yield f"data: {json.dumps({'error': err_msg})}\n\n"
+
+            return StreamingResponse(event_stream(), media_type="text/event-stream")
 
         result = await r.route(request_data, request.routing)
         return result
@@ -390,9 +428,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Start the LLM Router server.")
     parser.add_argument("--host", default=settings.host, help="Host to bind to")
-    parser.add_argument(
-        "--port", type=int, default=settings.port, help="Port to bind to"
-    )
+    parser.add_argument("--port", type=int, default=settings.port, help="Port to bind to")
     parser.add_argument(
         "--kill",
         action="store_true",
@@ -412,9 +448,7 @@ def main():
         import subprocess
 
         try:
-            output = subprocess.check_output(
-                ["lsof", "-ti", f":{args.port}"], text=True
-            ).strip()
+            output = subprocess.check_output(["lsof", "-ti", f":{args.port}"], text=True).strip()
             if output:
                 pids = output.split("\n")
                 for pid in pids:

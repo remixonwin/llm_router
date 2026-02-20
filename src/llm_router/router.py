@@ -88,6 +88,117 @@ if _LITELLM_AVAILABLE and settings.verbose_litellm:
         # Don't fail startup if the litellm debug toggle is unavailable.
         logging.getLogger(__name__).debug("Could not enable litellm verbose mode; continuing")
 
+
+# Helper to extract plain text from varied litellm chunk shapes. Keep this
+# conservative and defensive to avoid returning unpickled/internal objects.
+def _extract_chunk_text(item: Any) -> str:
+    try:
+        if item is None:
+            return ""
+        if isinstance(item, str):
+            return item
+        if isinstance(item, bytes):
+            return item.decode("utf-8", errors="replace")
+        if isinstance(item, dict):
+            # common litellm shapes: {'delta': {'content': '...'}}
+            d = item.get("delta") or item.get("message") or item
+            if isinstance(d, dict):
+                if "content" in d:
+                    return d["content"]
+                if "text" in d:
+                    return d["text"]
+            if "choices" in item and isinstance(item["choices"], list) and item["choices"]:
+                first = item["choices"][0]
+                if isinstance(first, dict):
+                    msg = first.get("message") or first.get("delta") or first
+                    if isinstance(msg, dict) and "content" in msg:
+                        return msg["content"]
+                    if "text" in first:
+                        return first["text"]
+            if "content" in item:
+                return item["content"]
+        # objects: try model_dump or attributes
+        if hasattr(item, "model_dump"):
+            try:
+                return _extract_chunk_text(item.model_dump())
+            except Exception:
+                pass
+        if hasattr(item, "message"):
+            try:
+                return _extract_chunk_text(getattr(item, "message"))
+            except Exception:
+                pass
+        if hasattr(item, "choices"):
+            try:
+                choices = getattr(item, "choices")
+                if isinstance(choices, (list, tuple)) and choices:
+                    return _extract_chunk_text(choices[0])
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return str(item)
+
+
+# If litellm is present and internals logging is disabled, wrap `acompletion`
+# so we only surface safe plain-text chunks or JSON-serialisable dicts.
+if _LITELLM_AVAILABLE and not settings.verbose_litellm_internals and acompletion is not None:
+    _orig_acompletion = acompletion
+
+    async def _safe_acompletion(*args: Any, **kwargs: Any) -> Any:
+        res = await _orig_acompletion(*args, **kwargs)
+        # If the response is an async iterable, return an async generator that
+        # yields plain text chunks (strings). Otherwise, normalise to text or
+        # a simple dict/str safe for JSON encoding.
+        if hasattr(res, "__aiter__"):
+
+            async def _aiter():
+                async for item in res:
+                    yield _extract_chunk_text(item)
+
+            return _aiter()
+
+        # Non-iterable: try to extract textual content or a serialisable dict
+        extracted = _extract_chunk_text(res)
+        # If extraction returned something that looks like JSON text, attempt to
+        # parse it so downstream code gets dicts where possible.
+        try:
+            import json
+
+            parsed = json.loads(extracted)
+            return parsed
+        except Exception:
+            return extracted
+
+    acompletion = _safe_acompletion  # type: ignore[assignment]
+
+# If internals logging is explicitly enabled, provide a lightweight debug wrapper
+# that logs raw litellm responses (or notes streaming) at DEBUG level. This is
+# separate from the safe wrapper and should only be active when administrators
+# intentionally enable verbose internals via VERBOSE_LITELLM_INTERNALS.
+if _LITELLM_AVAILABLE and settings.verbose_litellm_internals and acompletion is not None:
+    _orig_acomp_dbg = acompletion
+
+    async def _debug_acompletion(*args: Any, **kwargs: Any) -> Any:
+        try:
+            res = await _orig_acomp_dbg(*args, **kwargs)
+        except Exception as e:
+            logger.debug("litellm acompletion raised: %s", type(e).__name__)
+            raise
+        # If streaming result, avoid consuming it; just log that it's streaming.
+        try:
+            if hasattr(res, "__aiter__"):
+                logger.debug("litellm returned async iterable (streaming) for model call")
+            else:
+                # Log shallow repr; admins can enable internals and see details.
+                logger.debug("litellm raw response: %s", repr(res))
+        except Exception:
+            # Never allow logging to break execution
+            pass
+        return res
+
+    acompletion = _debug_acompletion  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 # Keyword patterns for task-type detection
@@ -466,6 +577,93 @@ class IntelligentRouter:
 
         last_exc: Exception | None = None
 
+        stream_mode = params.get("stream", False)
+
+        # Streaming path: attempt a single-call streaming response from the
+        # provider. If we receive an async iterable, return it so the caller
+        # (route) can stream it to the client. On failures we mark quota and
+        # return None to allow fallback to the next provider.
+        if stream_mode:
+            try:
+                self.quota.consume(provider)
+                lit = self._litellm_call(provider, model.model_id, messages, params)
+                # If _litellm_call returned a coroutine, await it to get the
+                # iterable or final result.
+                if asyncio.iscoroutine(lit):
+                    res = await lit
+                else:
+                    res = lit
+
+                latency = (time.monotonic() - start_time) * 1000
+                self.quota.record_latency(provider, latency)
+
+                # If res is async iterable, return it directly so server can
+                # iterate; otherwise wrap into an async generator that yields
+                # the single result.
+                if hasattr(res, "__aiter__"):
+                    return res  # type: ignore[return-value]
+
+                async def single():
+                    yield res
+
+                return single()
+
+            except LiteLLMRateLimit as e:
+                last_exc = e
+                msg = str(e).lower()
+                if any(
+                    k in msg
+                    for k in (
+                        "404",
+                        "model_not_found",
+                        "does not exist",
+                        "was removed",
+                        "removed on",
+                        "no longer available",
+                    )
+                ):
+                    try:
+                        self.discovery.remove_model(provider, model.model_id)
+                    except Exception:
+                        pass
+                    return None
+                self.quota.mark_rate_limited(provider, 0)
+                self.quota.mark_error(provider)
+                return None
+            except (LiteLLMTimeout, LiteLLMConnectionError) as e:
+                last_exc = e
+                self.quota.mark_error(provider)
+                logger.warning("%s: connection/timeout — %s", provider, e)
+                return None
+            except LiteLLMAuthError as e:
+                last_exc = e
+                self.quota.mark_auth_failed(provider)
+                logger.error("%s: authentication failure — %s", provider, e)
+                return None
+            except Exception as e:
+                last_exc = e
+                msg = str(e).lower()
+                if any(
+                    k in msg
+                    for k in (
+                        "404",
+                        "model_not_found",
+                        "does not exist",
+                        "was removed",
+                        "removed on",
+                        "no longer available",
+                    )
+                ):
+                    try:
+                        self.discovery.remove_model(provider, model.model_id)
+                    except Exception:
+                        pass
+                    return None
+                self.quota.mark_error(provider)
+                logger.warning("%s: unexpected error — %s", provider, e)
+                return None
+
+        # Non-streaming path: original retry logic with exponential backoff
         for attempt in range(1, settings.max_retries + 1):
             try:
                 self.quota.consume(provider)
@@ -479,9 +677,6 @@ class IntelligentRouter:
             except LiteLLMRateLimit as e:
                 last_exc = e
                 msg = str(e).lower()
-                # Some providers raise exceptions that are typed as rate-limit
-                # errors but contain permanent model-not-found messages. Detect
-                # those and remove the model from discovery cache.
                 if any(
                     k in msg
                     for k in (
@@ -527,10 +722,6 @@ class IntelligentRouter:
             except Exception as e:
                 last_exc = e
                 msg = str(e).lower()
-                # 404 / model-not-found / removed → skip this model permanently.
-                # Some providers (eg. Cohere) return messages like:
-                # "model 'command-r' was removed on ..." — treat that as a
-                # permanent model-not-found so we don't keep retrying it.
                 if any(
                     k in msg
                     for k in (
@@ -543,8 +734,6 @@ class IntelligentRouter:
                     )
                 ):
                     logger.warning("%s/%s: model not available — %s", provider, model.model_id, msg)
-                    # Try to remove the model from discovery cache to avoid
-                    # selecting it again in the near future.
                     try:
                         self.discovery.remove_model(provider, model.model_id)
                     except Exception:
@@ -586,12 +775,31 @@ class IntelligentRouter:
             litellm_model,
         )
 
-        return await acompletion(  # type: ignore[union-attr]
-            model=litellm_model,
-            messages=messages,
-            timeout=settings.llm_timeout,
-            **params,
-        )
+        # If streaming requested, attempt to return an async iterable from
+        # litellm without eagerly waiting for the full result. Some litellm
+        # versions return an async generator for streaming completions.
+        try:
+            coro = acompletion(  # type: ignore[union-attr]
+                model=litellm_model,
+                messages=messages,
+                timeout=settings.llm_timeout,
+                **params,
+            )
+            # If caller asked for stream we prefer to return an async
+            # iterable. If the call returns a coroutine that resolves to an
+            # async iterable, await it; otherwise if it's already an async
+            # iterable, return it directly.
+            if params.get("stream"):
+                # Await if it's a coroutine to get the iterable
+                if asyncio.iscoroutine(coro):
+                    result = await coro
+                    return result
+                return coro
+            # Non-streaming: await the coroutine and return result
+            return await coro
+        except Exception:
+            # Surface exceptions to caller to allow fallback handling
+            raise
 
     # ══════════════════════════════════════════════════════════════════════════
     # Fallback chain construction

@@ -58,6 +58,9 @@ class Settings:
     enable_ollama_fallback: bool = _env_bool("ENABLE_OLLAMA_FALLBACK", True)
     model_refresh_interval: int = int(os.getenv("MODEL_REFRESH_INTERVAL", "3600"))
     verbose_litellm: bool = _env_bool("VERBOSE_LITELLM", False)
+    # When true, include deeper litellm internal structures in debug logs.
+    # Default False to avoid leaking internal objects into logs.
+    verbose_litellm_internals: bool = _env_bool("VERBOSE_LITELLM_INTERNALS", False)
     auth_failure_cooldown_seconds: int = int(os.getenv("AUTH_FAILURE_COOLDOWN_SECONDS", "86400"))
 
     # Ollama
