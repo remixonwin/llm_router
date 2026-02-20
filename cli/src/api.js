@@ -1,6 +1,14 @@
 const { request } = require('undici');
 
 const BASE = process.env.LLM_ROUTER_URL || 'http://localhost:8080';
+const config = require('./config');
+
+function _authHeaders() {
+  const token = config.getToken();
+  const headers = { 'content-type': 'application/json' };
+  if (token) headers['authorization'] = `Bearer ${token}`;
+  return headers;
+}
 
 async function get(path) {
   const url = `${BASE}${path}`;
@@ -17,7 +25,7 @@ async function post(path, data) {
   const url = `${BASE}${path}`;
   const { body } = await request(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: _authHeaders(),
     body: JSON.stringify(data),
   });
   const text = await body.text();
@@ -35,7 +43,7 @@ async function postStream(path, data, onChunk, onDone, onError) {
   try {
     const { body } = await request(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: _authHeaders(),
       body: JSON.stringify(data),
     });
 

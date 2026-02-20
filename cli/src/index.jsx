@@ -13,7 +13,7 @@ function App() {
   const items = [
     { label: 'Models', value: 'models' },
     { label: 'Providers', value: 'providers' },
-    { label: 'Chat (one-off)', value: 'chat' },
+    { label: 'Chat (streaming)', value: 'chat' },
     { label: 'Health', value: 'health' },
     { label: 'Exit', value: 'exit' },
   ];

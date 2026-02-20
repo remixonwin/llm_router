@@ -3,6 +3,7 @@ const { Box, Text, useApp } = require('ink');
 const TextInput = require('ink-text-input').default;
 const { useState } = React;
 const api = require('../api');
+const cfg = require('../config');
 
 function Chat() {
   const { exit } = useApp();
@@ -58,7 +59,7 @@ function Chat() {
 
   if (step === 'done') {
     return React.createElement(Box, { flexDirection: 'column' },
-      loading ? React.createElement(Text, null, 'Sending...') : React.createElement(Text, { color: response && response.error ? 'red' : 'green' }, JSON.stringify(response, null, 2)),
+      loading ? React.createElement(Text, null, 'Sending...') : React.createElement(Text, { color: response && response.error ? 'red' : 'green' }, response),
       React.createElement(Text, { dimColor: true }, '\nPress ENTER to return to menu.'),
       React.createElement(BackListener, { onExit: exit })
     );
