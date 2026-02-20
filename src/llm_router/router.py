@@ -326,7 +326,7 @@ class IntelligentRouter:
         if not _LITELLM_AVAILABLE:
             return
         os.environ.setdefault("LITELLM_LOG", "ERROR")
-        for provider, cfg in PROVIDER_CATALOGUE.items():
+        for _provider, cfg in PROVIDER_CATALOGUE.items():
             env_name = cfg.get("api_key_env")
             if env_name:
                 val = os.getenv(env_name)
@@ -623,7 +623,8 @@ class IntelligentRouter:
             if val:
                 params["api_key"] = val
 
-        last_exc: Exception | None = None
+        # `last_exc` used to hold the last exception for debugging; remove the
+        # initial assignment to satisfy linters when unused.
 
         stream_mode = params.get("stream", False)
 

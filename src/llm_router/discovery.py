@@ -20,12 +20,16 @@ import time
 from typing import Any, Dict, List, Optional, Set
 
 try:
-    import httpx  # type: ignore[import]
+    import importlib.util
 
-    _HTTPX_AVAILABLE = True
-except ImportError:
+    if importlib.util.find_spec("httpx") is not None:
+        import httpx  # type: ignore[import]
+
+        _HTTPX_AVAILABLE = True
+    else:
+        _HTTPX_AVAILABLE = False
+except Exception:
     _HTTPX_AVAILABLE = False
-    # httpx is optional; import dynamically later when needed
 
 try:
     from cachetools import TTLCache  # type: ignore[import]
@@ -34,7 +38,8 @@ try:
 except ImportError:
     _CACHETOOLS_AVAILABLE = False
 
-    # Minimal fallback
+    # Minimal fallback TTLCache implementation for environments without
+    # cachetools. It mimics the small subset of behaviour we use.
     class TTLCache(dict):  # type: ignore[no-redef]
         def __init__(self, maxsize: int, ttl: float):
             super().__init__()
