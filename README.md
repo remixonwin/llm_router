@@ -1,54 +1,36 @@
 # Intelligent LLM Router
 
-A quota-aware LLM routing system that distributes requests across 13+ providers, with automatic failover and local Ollama fallback.
+Backend service that routes LLM requests across providers with quota
+management, discovery, and caching.
 
-## 🚀 Quick Start
+Quick start
 
-1. **Install [uv](https://docs.astral.sh/uv/)** (if not already installed).
-2. **Setup environment**:
-   ```bash
-   cp .env.example .env
-   # Add your API keys (GROQ_API_KEY, GEMINI_API_KEY, etc.)
-   ```
-3. **Run the server**:
-   ```bash
-   uv run llm-router
-   ```
+- Copy env template and add provider API keys: `cp .env.example .env`
+- Run the server (it listens on port 7544 by default).
 
-## 🛠️ API Usage
+APIs (minimal)
 
-The router provides an OpenAI-compatible API on port `7544`.
+- `POST /v1/chat/completions`
+- `POST /v1/embeddings`
+- `POST /v1/vision`
+- `GET /v1/models`
+- `GET /providers`
 
-### Chat Completion
-```bash
-curl http://localhost:7544/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "routing": { "strategy": "cost_optimized" }
-  }'
-```
+Run locally
 
-### Other Endpoints
-- `POST /v1/embeddings`: Get vector embeddings.
-- `POST /v1/vision`: Analyze images via URL or base64.
-- `GET /v1/models`: List all discovered models.
-- `GET /providers`: View real-time quota & latency stats.
+- Load env: `cp .env.example .env && edit .env` (set provider API keys)
+- Start locally: `python -m llm_router.server` or `python -m uvicorn llm_router.server:app --port 7544`
 
-Note: The CLI under `cli/` is experimental and currently has a backend
-integration issue. We exclude the CLI from release packaging until the
-backend CLI bugs are resolved. See `cli/README.md` for local development.
+Run with Docker
 
-## ✨ Features
+- Build: `docker build -t llm-router .`
+- Run: `docker run -p 7544:7544 --env-file .env llm-router`
 
-- **Intelligent Routing**: Strategies for `auto`, `cost_optimized`, `quality_first`, and `latency_first`.
-- **Automatic Discovery**: Dynamically fetches model capabilities from providers every hour.
-- **Failover & Resilience**: Token-bucket rate limiting, circuit breakers, and automatic provider fallbacks.
-- **Two-Tier Cache**: High-performance exact (DiskCache) and semantic (Cosine similarity) caching.
-- **Local Fallback**: Uses Ollama as a last resort when all cloud quotas are exhausted.
+Run tests
 
-## 📂 Project Structure
+- `pytest -q`
 
-- `src/llm_router/`: Core logic (Router, Quota Manager, Discovery, Cache).
-- `tests/`: Comprehensive test suite (`uv run pytest`).
-- `pyproject.toml`: Modern dependency management via `uv`.
+Project layout
+
+- `src/llm_router/` — backend implementation
+- `tests/` — unit and integration tests
