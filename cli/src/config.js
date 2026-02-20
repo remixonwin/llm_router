@@ -45,4 +45,10 @@ function setToken(token) {
   return _write(cfg);
 }
 
-module.exports = { getToken, setToken, FILE };
+function clearToken() {
+  const cfg = _read();
+  delete cfg.token;
+  return _write(cfg);
+}
+
+module.exports = { getToken, setToken, clearToken, FILE };

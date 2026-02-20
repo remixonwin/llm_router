@@ -14,6 +14,8 @@ function App() {
     { label: 'Models', value: 'models' },
     { label: 'Providers', value: 'providers' },
     { label: 'Chat (streaming)', value: 'chat' },
+    { label: 'Auth: Set Token', value: 'auth_set' },
+    { label: 'Auth: Clear Token', value: 'auth_clear' },
     { label: 'Health', value: 'health' },
     { label: 'Exit', value: 'exit' },
   ];
@@ -45,6 +47,28 @@ function App() {
       return React.createElement(Text, null, `Status: ${h.status} — providers ${h.providers_available.length}/${h.providers_total}`);
     };
     return React.createElement(Box, { flexDirection: 'column' }, React.createElement(BackWrapper, null, React.createElement(Health, null)));
+  }
+
+  if (view === 'auth_set') {
+    const TextInput = require('ink-text-input').default;
+    const cfg = require('./config');
+    const Auth = () => {
+      const { useState } = React;
+      const [val, setVal] = useState('');
+      return React.createElement(
+        Box,
+        { flexDirection: 'column' },
+        React.createElement(Text, null, 'Paste API token (will be saved to ~/.llm-router-cli/config.json):'),
+        React.createElement(TextInput, { value: val, onChange: setVal, onSubmit: () => { cfg.setToken(val); process.exit(0); } })
+      );
+    };
+    return React.createElement(Box, { flexDirection: 'column' }, React.createElement(BackWrapper, null, React.createElement(Auth, null)));
+  }
+
+  if (view === 'auth_clear') {
+    const cfg = require('./config');
+    cfg.clearToken();
+    return React.createElement(Box, { flexDirection: 'column' }, React.createElement(Text, null, 'Token cleared.'), React.createElement(Text, { dimColor: true }, 'Press ENTER to return.'), React.createElement(BackWrapper, null));
   }
 
   return React.createElement(Text, null, 'Unknown view');
