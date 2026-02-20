@@ -6,10 +6,20 @@ dist/
 wheels/
 *.egg-info
 
-# Virtual environments
-.venv
+# Virtual environments / local env files
+.venv/
 .env
+env/
+venv/
 uv.lock
+
+# Dist and packaging
+dist/
+*.egg-info/
+
+# Logs and runtime files
+router.log
+*.log
 
 # IDE
 .vscode/

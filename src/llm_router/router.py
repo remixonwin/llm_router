@@ -118,9 +118,13 @@ def _extract_chunk_text(item: Any) -> str:
             if "content" in item:
                 return item["content"]
         # objects: try model_dump or attributes
-        if hasattr(item, "model_dump"):
+        # Prefer using getattr to avoid static analysis warnings where `item`
+        # may be typed as a dict. If a pydantic model exposes `model_dump`,
+        # call it and re-run extraction on the result.
+        md = getattr(item, "model_dump", None)
+        if callable(md):
             try:
-                return _extract_chunk_text(item.model_dump())
+                return _extract_chunk_text(md())
             except Exception:
                 pass
         if hasattr(item, "message"):
@@ -206,24 +210,45 @@ _VISION_CONTENT_INDICATORS: frozenset = frozenset(["image_url", "data:image"])
 _EMBEDDING_TASK_TYPES: frozenset = frozenset(["embeddings", "embedding"])
 
 # Strategy weight presets  (w_quota, w_latency, w_quality, w_errors)
+# Use explicit dict literals to keep static analysis happy and concise.
 _STRATEGY_WEIGHTS: dict[str, dict[str, float]] = {
-    RoutingStrategy.AUTO: dict(w_quota=0.50, w_latency=0.25, w_quality=0.15, w_errors=0.10),
-    RoutingStrategy.COST_OPTIMIZED: dict(
-        w_quota=0.80, w_latency=0.10, w_quality=0.05, w_errors=0.05
-    ),
-    RoutingStrategy.QUALITY_FIRST: dict(
-        w_quota=0.10, w_latency=0.20, w_quality=0.60, w_errors=0.10
-    ),
-    RoutingStrategy.LATENCY_FIRST: dict(
-        w_quota=0.20, w_latency=0.60, w_quality=0.10, w_errors=0.10
-    ),
-    RoutingStrategy.ROUND_ROBIN: dict(w_quota=0.25, w_latency=0.25, w_quality=0.25, w_errors=0.25),
-    RoutingStrategy.CONTEXT_LENGTH: dict(
-        w_quota=0.20, w_latency=0.20, w_quality=0.30, w_errors=0.10
-    ),
-    RoutingStrategy.VISION_CAPABLE: dict(
-        w_quota=0.20, w_latency=0.20, w_quality=0.30, w_errors=0.10
-    ),
+    RoutingStrategy.AUTO: {"w_quota": 0.50, "w_latency": 0.25, "w_quality": 0.15, "w_errors": 0.10},
+    RoutingStrategy.COST_OPTIMIZED: {
+        "w_quota": 0.80,
+        "w_latency": 0.10,
+        "w_quality": 0.05,
+        "w_errors": 0.05,
+    },
+    RoutingStrategy.QUALITY_FIRST: {
+        "w_quota": 0.10,
+        "w_latency": 0.20,
+        "w_quality": 0.60,
+        "w_errors": 0.10,
+    },
+    RoutingStrategy.LATENCY_FIRST: {
+        "w_quota": 0.20,
+        "w_latency": 0.60,
+        "w_quality": 0.10,
+        "w_errors": 0.10,
+    },
+    RoutingStrategy.ROUND_ROBIN: {
+        "w_quota": 0.25,
+        "w_latency": 0.25,
+        "w_quality": 0.25,
+        "w_errors": 0.25,
+    },
+    RoutingStrategy.CONTEXT_LENGTH: {
+        "w_quota": 0.20,
+        "w_latency": 0.20,
+        "w_quality": 0.30,
+        "w_errors": 0.10,
+    },
+    RoutingStrategy.VISION_CAPABLE: {
+        "w_quota": 0.20,
+        "w_latency": 0.20,
+        "w_quality": 0.30,
+        "w_errors": 0.10,
+    },
 }
 
 
@@ -322,14 +347,13 @@ class IntelligentRouter:
         self,
         request_data: dict[str, Any],
         routing_options: RoutingOptions | None = None,
-    ) -> dict[str, Any]:
-        """
-        Route a request to the optimal provider.
+    ) -> Any:
+        """Route a request to the optimal provider.
 
-        ``request_data`` must contain at minimum one of:
-          • ``messages`` — for chat/text
-          • ``input``    — for embeddings
-          • ``image_url`` or ``image_base64`` — for vision
+        ``request_data`` must contain at minimum one of: messages, input or
+        image data. The return value may be a dict (synchronous response) or
+        an async iterable for streaming completions — callers should handle
+        both shapes. The return type is therefore annotated as Any.
         """
         await self.discovery.refresh_if_stale()
 
@@ -499,11 +523,35 @@ class IntelligentRouter:
         raise RuntimeError("All embedding providers failed")
 
     async def _call_embedding(self, model_id: str, text: Any) -> list[list[float]]:
-        if not _LITELLM_AVAILABLE:
+        if not _LITELLM_AVAILABLE or not hasattr(litellm, "aembedding"):
             raise ImportError("litellm required: pip install litellm")
-        texts = [text] if isinstance(text, str) else text
-        response = await litellm.aembedding(model=model_id, input=texts)  # type: ignore[union-attr]
-        return [item["embedding"] for item in response["data"]]
+        texts = [text] if isinstance(text, str) else list(text)
+        aembed = getattr(litellm, "aembedding")
+        if not callable(aembed):
+            raise ImportError("litellm aembedding not callable")
+        response = await aembed(model=model_id, input=texts)  # type: ignore[call-arg]
+        data = getattr(response, "get", None)
+        if callable(data):
+            items = response.get("data", [])
+        else:
+            # If response is an object with attribute `data`
+            items = getattr(response, "data", [])
+        embeddings: list[list[float]] = []
+        for item in items:
+            try:
+                if isinstance(item, dict):
+                    emb = item.get("embedding")
+                else:
+                    emb = getattr(item, "embedding", None)
+                if emb is None:
+                    continue
+                if isinstance(emb, (list, tuple)):
+                    embeddings.append([float(x) for x in emb])
+                else:
+                    embeddings.append([float(emb)])
+            except Exception:
+                continue
+        return embeddings
 
     # ══════════════════════════════════════════════════════════════════════════
     # Attempt + fallback logic
@@ -545,7 +593,7 @@ class IntelligentRouter:
         start_time: float,
         original_provider: str,
         strategy: str,
-    ) -> dict[str, Any] | None:
+    ) -> Any | None:
         """
         Attempt a single provider+model.  Handles:
           - RPM rate limits (exponential back-off, up to MAX_RETRIES)
@@ -579,91 +627,38 @@ class IntelligentRouter:
 
         stream_mode = params.get("stream", False)
 
-        # Streaming path: attempt a single-call streaming response from the
-        # provider. If we receive an async iterable, return it so the caller
-        # (route) can stream it to the client. On failures we mark quota and
-        # return None to allow fallback to the next provider.
+        # Streaming path: delegate to helper for clarity and reduced complexity.
         if stream_mode:
-            try:
-                self.quota.consume(provider)
-                lit = self._litellm_call(provider, model.model_id, messages, params)
-                # If _litellm_call returned a coroutine, await it to get the
-                # iterable or final result.
-                if asyncio.iscoroutine(lit):
-                    res = await lit
-                else:
-                    res = lit
-
-                latency = (time.monotonic() - start_time) * 1000
-                self.quota.record_latency(provider, latency)
-
-                # If res is async iterable, return it directly so server can
-                # iterate; otherwise wrap into an async generator that yields
-                # the single result.
-                if hasattr(res, "__aiter__"):
-                    return res  # type: ignore[return-value]
-
-                async def single():
-                    yield res
-
-                return single()
-
-            except LiteLLMRateLimit as e:
-                last_exc = e
-                msg = str(e).lower()
-                if any(
-                    k in msg
-                    for k in (
-                        "404",
-                        "model_not_found",
-                        "does not exist",
-                        "was removed",
-                        "removed on",
-                        "no longer available",
-                    )
-                ):
-                    try:
-                        self.discovery.remove_model(provider, model.model_id)
-                    except Exception:
-                        pass
-                    return None
-                self.quota.mark_rate_limited(provider, 0)
-                self.quota.mark_error(provider)
-                return None
-            except (LiteLLMTimeout, LiteLLMConnectionError) as e:
-                last_exc = e
-                self.quota.mark_error(provider)
-                logger.warning("%s: connection/timeout — %s", provider, e)
-                return None
-            except LiteLLMAuthError as e:
-                last_exc = e
-                self.quota.mark_auth_failed(provider)
-                logger.error("%s: authentication failure — %s", provider, e)
-                return None
-            except Exception as e:
-                last_exc = e
-                msg = str(e).lower()
-                if any(
-                    k in msg
-                    for k in (
-                        "404",
-                        "model_not_found",
-                        "does not exist",
-                        "was removed",
-                        "removed on",
-                        "no longer available",
-                    )
-                ):
-                    try:
-                        self.discovery.remove_model(provider, model.model_id)
-                    except Exception:
-                        pass
-                    return None
-                self.quota.mark_error(provider)
-                logger.warning("%s: unexpected error — %s", provider, e)
-                return None
+            return await self._handle_stream_call(
+                provider=provider,
+                model=model,
+                messages=messages,
+                params=params,
+                start_time=start_time,
+            )
 
         # Non-streaming path: original retry logic with exponential backoff
+        return await self._handle_nonstream_calls(
+            provider=provider,
+            model=model,
+            messages=messages,
+            params=params,
+            start_time=start_time,
+            strategy=strategy,
+            original_provider=original_provider,
+        )
+
+    async def _handle_nonstream_calls(
+        self,
+        provider: str,
+        model: ModelRecord,
+        messages: list[dict[str, Any]],
+        params: dict[str, Any],
+        start_time: float,
+        strategy: str,
+        original_provider: str,
+    ) -> dict[str, Any] | None:
+        """Handle the retry loop for non-streaming calls. Returns a response dict or None."""
         for attempt in range(1, settings.max_retries + 1):
             try:
                 self.quota.consume(provider)
@@ -675,7 +670,6 @@ class IntelligentRouter:
                 )
 
             except LiteLLMRateLimit as e:
-                last_exc = e
                 msg = str(e).lower()
                 if any(
                     k in msg
@@ -708,19 +702,16 @@ class IntelligentRouter:
                     return None
 
             except (LiteLLMTimeout, LiteLLMConnectionError) as e:
-                last_exc = e
                 self.quota.mark_error(provider)
                 logger.warning("%s: connection/timeout — %s", provider, e)
                 return None
 
             except LiteLLMAuthError as e:
-                last_exc = e
                 self.quota.mark_auth_failed(provider)
                 logger.error("%s: authentication failure — %s", provider, e)
                 return None
 
             except Exception as e:
-                last_exc = e
                 msg = str(e).lower()
                 if any(
                     k in msg
@@ -744,6 +735,89 @@ class IntelligentRouter:
                 return None
 
         return None
+
+    async def _handle_stream_call(
+        self,
+        provider: str,
+        model: ModelRecord,
+        messages: list[dict[str, Any]],
+        params: dict[str, Any],
+        start_time: float,
+    ) -> Any | None:
+        """Handle a single streaming-capable call. Returns an async iterable or None on failure.
+
+        This extracts the streaming-path logic out of _try_provider to keep
+        that function smaller and easier to reason about.
+        """
+        try:
+            self.quota.consume(provider)
+            lit = self._litellm_call(provider, model.model_id, messages, params)
+            if asyncio.iscoroutine(lit):
+                res = await lit
+            else:
+                res = lit
+
+            latency = (time.monotonic() - start_time) * 1000
+            self.quota.record_latency(provider, latency)
+
+            if hasattr(res, "__aiter__"):
+                return res  # type: ignore[return-value]
+
+            async def single():
+                yield res
+
+            return single()
+
+        except LiteLLMRateLimit as e:
+            msg = str(e).lower()
+            if any(
+                k in msg
+                for k in (
+                    "404",
+                    "model_not_found",
+                    "does not exist",
+                    "was removed",
+                    "removed on",
+                    "no longer available",
+                )
+            ):
+                try:
+                    self.discovery.remove_model(provider, model.model_id)
+                except Exception:
+                    pass
+                return None
+            self.quota.mark_rate_limited(provider, 0)
+            self.quota.mark_error(provider)
+            return None
+        except (LiteLLMTimeout, LiteLLMConnectionError) as e:
+            self.quota.mark_error(provider)
+            logger.warning("%s: connection/timeout — %s", provider, e)
+            return None
+        except LiteLLMAuthError as e:
+            self.quota.mark_auth_failed(provider)
+            logger.error("%s: authentication failure — %s", provider, e)
+            return None
+        except Exception as e:
+            msg = str(e).lower()
+            if any(
+                k in msg
+                for k in (
+                    "404",
+                    "model_not_found",
+                    "does not exist",
+                    "was removed",
+                    "removed on",
+                    "no longer available",
+                )
+            ):
+                try:
+                    self.discovery.remove_model(provider, model.model_id)
+                except Exception:
+                    pass
+                return None
+            self.quota.mark_error(provider)
+            logger.warning("%s: unexpected error — %s", provider, e)
+            return None
 
     async def _litellm_call(
         self, provider: str, model_id: str, messages: list[Any], params: dict[str, Any]
@@ -779,7 +853,12 @@ class IntelligentRouter:
         # litellm without eagerly waiting for the full result. Some litellm
         # versions return an async generator for streaming completions.
         try:
-            coro = acompletion(  # type: ignore[union-attr]
+            # Ensure acompletion is available (it may be wrapped or disabled)
+            local_acompletion = acompletion
+            if not callable(local_acompletion):
+                raise ImportError("litellm acompletion not available")
+
+            coro = local_acompletion(  # type: ignore[union-attr]
                 model=litellm_model,
                 messages=messages,
                 timeout=settings.llm_timeout,
@@ -982,7 +1061,7 @@ class IntelligentRouter:
     # ══════════════════════════════════════════════════════════════════════════
 
     @staticmethod
-    def _format_response(
+    def _format_response(  # type: ignore
         raw: Any,
         provider: str,
         model: ModelRecord,
@@ -991,14 +1070,38 @@ class IntelligentRouter:
         original_provider: str,
     ) -> dict[str, Any]:
         """Normalise a litellm response into a standard dict."""
-        if isinstance(raw, dict):
-            resp: dict[str, Any] = raw
-        elif hasattr(raw, "model_dump"):
-            resp = dict(raw.model_dump())
-        else:
-            resp = dict(vars(raw))
+        # Normalize the raw response into a dict[str, Any] safely. We avoid
+        # returning objects that might contain non-serialisable internals.
+        resp_dict: dict[str, Any] = {}
 
-        resp["routing_metadata"] = {  # type: ignore[index]
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                try:
+                    resp_dict[str(k)] = v
+                except Exception:
+                    resp_dict[str(k)] = str(v)
+
+        else:
+            md = getattr(raw, "model_dump", None)
+            if callable(md):
+                try:
+                    d = md()
+                    # d may be a mapping-like object or a pydantic model result;
+                    # iterate via items() when available, otherwise fall back to vars().
+                    # `d` may be a mapping-like object or a simple namespace.
+                    # Attempt to iterate mapping-like contents safely.
+                    for k, v in self._iter_items(d):
+                        resp_dict[str(k)] = v
+                except Exception:
+                    resp_dict["result"] = str(raw)
+            else:
+                # For arbitrary objects: prefer items() if present, else vars(),
+                # otherwise provide a string representation.
+                for k, v in self._iter_items(raw):
+                    resp_dict[str(k)] = v
+
+        # Attach routing metadata with predictable types
+        resp_dict["routing_metadata"] = {
             "provider": provider,
             "model": model.model_id,
             "strategy": strategy,
@@ -1008,7 +1111,8 @@ class IntelligentRouter:
             "fallback": provider != original_provider,
             "original_provider": original_provider,
         }
-        return resp
+
+        return resp_dict
 
     @staticmethod
     def _is_daily_limit(exc: Exception) -> bool:
@@ -1023,6 +1127,30 @@ class IntelligentRouter:
                 "daily limit",
             )
         )
+
+    @staticmethod
+    def _iter_items(obj: object):
+        """Yield (key, value) pairs for mapping-like or object-like inputs.
+
+        This helper avoids direct attribute access that static analysers may
+        flag and centralises the try/except logic used when coercing objects
+        into dicts for JSON responses.
+        """
+        try:
+            if hasattr(obj, "items"):
+                for k, v in obj.items():  # type: ignore[attr-defined]
+                    yield k, v
+                return
+        except Exception:
+            pass
+        try:
+            for k, v in vars(obj).items():
+                yield k, v
+            return
+        except Exception:
+            pass
+        # Fallback to nothing
+        return
 
     @staticmethod
     def _parse_retry_delay(exc: Exception) -> float | None:

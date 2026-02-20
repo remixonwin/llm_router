@@ -42,23 +42,28 @@ from llm_router.router import IntelligentRouter  # type: ignore[import]
 
 logger = logging.getLogger(__name__)
 
+# pylint: disable=broad-except
+# Broad excepts are used deliberately in FastAPI route handlers and lifecycle
+# management to ensure we surface safe, short error messages to clients and
+# avoid leaking internal state. We'll narrow these handlers in focused PRs.
+
 # ── Singleton router instance ─────────────────────────────────────────────────
-_router: IntelligentRouter | None = None
+_router: IntelligentRouter | None = None  # pylint: disable=invalid-name
 
 
 def get_router() -> IntelligentRouter:
+    """Return the singleton IntelligentRouter instance.
+
+    Raises RuntimeError if the router has not been initialised via the
+    FastAPI lifespan manager.
+    """
     if _router is None:
         raise RuntimeError("Router not initialised — check lifespan startup")
     return _router
 
 
-def _require_admin_token(x_admin_token: str | None = Header(None)) -> None:
-    """Admin auth dependency.
-
-    Currently a no-op to keep admin endpoints open for testing and local
-    development. In production you should replace this with a real check
-    against a strong secret (eg. ADMIN_API_TOKEN) and restrict access.
-    """
+def _require_admin_token(_x_admin_token: str | None = Header(None)) -> None:
+    """Admin auth dependency used by admin endpoints (no-op for tests)."""
     return None
 
 
@@ -68,7 +73,13 @@ def _require_admin_token(x_admin_token: str | None = Header(None)) -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """FastAPI lifespan context manager: starts and stops the router.
+
+    The router is created at process startup and stopped cleanly on shutdown.
+    """
+    # `global` is required to assign the module-level singleton instance.
+    # pylint: disable=global-statement
     global _router
     # Start router and surface any startup failure so orchestrators can detect
     # unready state. Ensure shutdown always attempts to stop the router cleanly.
@@ -100,9 +111,10 @@ app = FastAPI(
     title="Intelligent LLM Router",
     version="2.0.0",
     description=(
-        "Dynamic, quota-aware LLM router across Groq, Gemini, Mistral, OpenRouter, "
-        "Together, HuggingFace, Cohere, DeepSeek, DashScope, xAI, OpenAI, Anthropic — "
-        "with Ollama as strict local fallback."
+        "Dynamic, quota-aware LLM router across many cloud providers."
+        " Supports Groq, Gemini, Mistral, OpenRouter, Together, HuggingFace,"
+        " Cohere, DeepSeek, DashScope, xAI, OpenAI and Anthropic."
+        " Ollama is available as a local fallback."
     ),
     lifespan=lifespan,
 )
@@ -122,6 +134,8 @@ app.add_middleware(
 
 
 class ChatRequest(BaseModel):
+    """Schema for incoming chat completion requests."""
+
     model: str | None = None
     messages: list[Any]
     temperature: float | None = Field(None, ge=0.0, le=2.0)
@@ -134,12 +148,16 @@ class ChatRequest(BaseModel):
 
 
 class EmbedRequest(BaseModel):
+    """Schema for embedding requests."""
+
     model: str | None = None
     input: str | list[str]
     routing: RoutingOptions | None = None
 
 
 class VisionTaskRequest(BaseModel):
+    """Schema for vision tasks (classify / detect / ocr / caption / qa)."""
+
     task_type: TaskType = TaskType.VISION_UNDERSTANDING
     image_url: str | None = None
     image_base64: str | None = None
@@ -157,6 +175,7 @@ class VisionTaskRequest(BaseModel):
 
 @app.get("/", include_in_schema=False)
 async def root() -> dict[str, str]:
+    """Lightweight health endpoint for probes / browser check."""
     return {"status": "ok", "service": "Intelligent LLM Router v2"}
 
 
@@ -165,6 +184,7 @@ async def root() -> dict[str, str]:
 
 @app.get("/health", tags=["Observability"])
 async def health() -> dict[str, Any]:
+    """Return health and provider availability information."""
     r = get_router()
     stats = r.quota.get_stats()
     available = [p for p, s in stats.items() if s["available"]]
@@ -223,6 +243,7 @@ async def list_provider_models(provider: str) -> dict[str, Any]:
 
 @app.post("/v1/chat/completions", tags=["Completions"])
 async def chat_completions(request: ChatRequest) -> Any:
+    """Handle chat completion requests; supports streaming via SSE."""
     r = get_router()
     try:
         request_data: dict[str, Any] = {
@@ -280,10 +301,10 @@ async def chat_completions(request: ChatRequest) -> Any:
         return result
 
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         logger.exception("chat_completions error")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # ── Embeddings ────────────────────────────────────────────────────────────────
@@ -291,6 +312,7 @@ async def chat_completions(request: ChatRequest) -> Any:
 
 @app.post("/v1/embeddings", tags=["Embeddings"])
 async def embeddings(request: EmbedRequest) -> Any:
+    """Create embeddings for provided input using the routing layer."""
     r = get_router()
     try:
         result = await r.route(
@@ -299,10 +321,10 @@ async def embeddings(request: EmbedRequest) -> Any:
         )
         return result
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         logger.exception("embeddings error")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # ── Vision ────────────────────────────────────────────────────────────────────
@@ -310,6 +332,7 @@ async def embeddings(request: EmbedRequest) -> Any:
 
 @app.post("/v1/vision", tags=["Vision"])
 async def vision(request: VisionTaskRequest) -> Any:
+    """Handle vision tasks (classify/detect/ocr/qa/caption)."""
     r = get_router()
     if not request.image_url and not request.image_base64:
         raise HTTPException(
@@ -328,10 +351,10 @@ async def vision(request: VisionTaskRequest) -> Any:
         result = await r.route(request_data, request.routing)
         return result
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         logger.exception("vision error")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # ── Provider stats ────────────────────────────────────────────────────────────
@@ -339,6 +362,7 @@ async def vision(request: VisionTaskRequest) -> Any:
 
 @app.get("/providers", tags=["Observability"])
 async def provider_stats() -> dict[str, Any]:
+    """Return quota and cache stats for all providers."""
     r = get_router()
     return {
         "providers": r.quota.get_stats(),
@@ -348,6 +372,7 @@ async def provider_stats() -> dict[str, Any]:
 
 @app.get("/providers/{provider}", tags=["Observability"])
 async def single_provider_stats(provider: str) -> dict[str, Any]:
+    """Return statistics for a single provider."""
     r = get_router()
     stats = r.quota.get_stats()
     if provider not in stats:
@@ -359,21 +384,24 @@ async def single_provider_stats(provider: str) -> dict[str, Any]:
 
 
 @app.post("/admin/refresh", tags=["Admin"])
-async def force_refresh(admin: None = Depends(_require_admin_token)) -> dict[str, str]:
+async def force_refresh(_admin: None = Depends(_require_admin_token)) -> dict[str, str]:
+    """Force discovery refresh for all providers (admin)."""
     r = get_router()
     await r.discovery.refresh_all(force=True)
     return {"status": "ok", "message": "Model capabilities refreshed"}
 
 
 @app.post("/admin/cache/clear", tags=["Admin"])
-async def clear_cache(admin: None = Depends(_require_admin_token)) -> dict[str, str]:
+async def clear_cache(_admin: None = Depends(_require_admin_token)) -> dict[str, str]:
+    """Clear the response cache (admin)."""
     r = get_router()
     r.cache.clear()
     return {"status": "ok", "message": "Response cache cleared"}
 
 
 @app.post("/admin/quotas/reset", tags=["Admin"])
-async def reset_quotas(admin: None = Depends(_require_admin_token)) -> dict[str, str]:
+async def reset_quotas(_admin: None = Depends(_require_admin_token)) -> dict[str, str]:
+    """Reset runtime quota counters for all providers (admin)."""
     r = get_router()
     for state in r.quota.states.values():
         state.rpd_used = 0
@@ -388,7 +416,7 @@ async def reset_quotas(admin: None = Depends(_require_admin_token)) -> dict[str,
 
 @app.get("/stats", tags=["Observability"])
 async def full_stats() -> dict[str, Any]:
-    """Combined stats: quotas + cache + model counts."""
+    """Return combined diagnostics: quotas, cache, and model counts."""
     r = get_router()
     return r.get_stats()
 
@@ -399,7 +427,8 @@ async def full_stats() -> dict[str, Any]:
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+async def global_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Global exception handler that returns a short JSON error object."""
     logger.exception("Unhandled exception: %s", exc)
     return JSONResponse(
         status_code=500,
@@ -424,7 +453,6 @@ def main():
         load_dotenv()
     except Exception:
         logger.debug("No .env loaded or python-dotenv not available")
-    from llm_router.config import settings  # type: ignore[import]
 
     parser = argparse.ArgumentParser(description="Start the LLM Router server.")
     parser.add_argument("--host", default=settings.host, help="Host to bind to")
