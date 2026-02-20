@@ -35,4 +35,3 @@ Tests
 
 - Run tests: `pytest -q`
 
-This README provides only basic commands to run the backend.
