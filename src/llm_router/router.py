@@ -692,7 +692,10 @@ class IntelligentRouter:
         accepts keyword args. The function awaits and returns whatever
         litellm.acompletion returns.
         """
-        if not _LITELLM_AVAILABLE:
+        # Allow tests to patch `acompletion` directly even if litellm isn't
+        # importable in the environment. Only raise if litellm isn't available
+        # and no `acompletion` function has been provided.
+        if not _LITELLM_AVAILABLE and acompletion is None:
             raise ImportError("litellm not installed — run: pip install litellm")
         # Help the static analyzer understand `acompletion` is callable here
         assert acompletion is not None and callable(acompletion)
