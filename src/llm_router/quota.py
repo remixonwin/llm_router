@@ -232,17 +232,24 @@ class QuotaManager:
         state = self.states.get(provider)
         if not state:
             return 0.0
-        quota_s = (
-            state.rpd_remaining / state.rpd_limit if state.rpd_limit > 0 else 0.0
-        )
+        quota_s = state.rpd_remaining / state.rpd_limit if state.rpd_limit > 0 else 0.0
         latency_s = 1.0 / (1.0 + state.avg_latency_ms / 1_000.0)
         error_s = 1.0 / (1.0 + state.consecutive_errors)
-        return (
+
+        base_score = (
             w_quota * quota_s
             + w_latency * latency_s
             + w_quality * state.quality_score
             + w_errors * error_s
         )
+
+        cfg = PROVIDER_CATALOGUE.get(provider)
+        if cfg:
+            priority = cfg.get("priority", 999)
+            priority_multiplier = max(1, (100 - priority) + 1)
+            return base_score * priority_multiplier
+
+        return base_score
 
     def scored_providers(
         self, available_only: bool = True, exclude: list[str] | None = None

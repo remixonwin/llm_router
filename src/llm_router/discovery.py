@@ -63,6 +63,49 @@ except ImportError:
 import os
 
 from llm_router.config import BOOTSTRAP_MODELS, PROVIDER_CATALOGUE, settings  # type: ignore[import]
+
+
+def _parse_openai_compatible_models(provider: str) -> list[ModelRecord]:
+    """Parse models from ROUTER_OPENAI_COMPATIBLE_MODELS environment variable.
+
+    Format: model1,model2,model3 or model1:context:rpm,model2:context:rpm
+    """
+    models_str = getattr(settings, "openai_compatible_models", "") or ""
+    if not models_str:
+        return []
+
+    records: list[ModelRecord] = []
+    for model_entry in models_str.split(","):
+        model_entry = model_entry.strip()
+        if not model_entry:
+            continue
+
+        parts = model_entry.split(":")
+        mid = parts[0].strip()
+        if not mid:
+            continue
+
+        context = int(parts[1]) if len(parts) > 1 else 4_096
+        rpm = int(parts[2]) if len(parts) > 2 else 60
+
+        caps = _infer_capabilities(mid)
+        records.append(
+            ModelRecord(
+                provider=provider,
+                model_id=mid,
+                full_id=f"{provider}/{mid}",
+                capabilities=caps,
+                context_window=context,
+                rpm_limit=rpm,
+                is_free=False,
+                supports_streaming=True,
+                supports_tools="function_calling" in caps,
+                supports_vision="vision" in caps,
+            )
+        )
+    return records
+
+
 from llm_router.models import ModelRecord  # type: ignore[import]
 
 logger = logging.getLogger(__name__)
@@ -440,6 +483,7 @@ _PROVIDER_PARSERS = {
     "mistral": _parse_mistral_models,
     "cohere": _parse_cohere_models,
     "ollama": _parse_ollama_tags,
+    "openai_compatible": _parse_openai_style,
 }
 
 
@@ -627,6 +671,14 @@ class CapabilityDiscovery:
         catalogue = PROVIDER_CATALOGUE[provider]
         url = catalogue.get("models_url")
         if not url:
+            if provider == "openai_compatible":
+                configured_models = _parse_openai_compatible_models(provider)
+                if configured_models:
+                    self._cache[f"models:{provider}"] = configured_models
+                    logger.debug(
+                        "Loaded %d models from config for %s", len(configured_models), provider
+                    )
+                    return
             self._cache[f"models:{provider}"] = self._bootstrap_models(provider)
             return
 

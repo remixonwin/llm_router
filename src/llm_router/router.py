@@ -202,6 +202,20 @@ class IntelligentRouter:
                 os.environ[f"{provider.upper()}_BASE_URL"] = base_url
                 os.environ[f"{provider.upper()}_API_BASE"] = base_url
 
+        # Configure OpenAI-compatible custom provider
+        if settings.openai_compatible_api_base:
+            os.environ["OPENAI_COMPATIBLE_API_BASE"] = settings.openai_compatible_api_base
+            api_key = os.getenv("ROUTER_OPENAI_COMPATIBLE_API_KEY", "")
+            if api_key:
+                os.environ["OPENAI_COMPATIBLE_API_KEY"] = api_key
+                configured_providers.append("openai_compatible")
+            else:
+                missing_providers.append(("openai_compatible", "ROUTER_OPENAI_COMPATIBLE_API_KEY"))
+            logger.info(
+                "Configured OpenAI-compatible provider: %s",
+                settings.openai_compatible_api_base,
+            )
+
         # Log configuration status
         if configured_providers:
             logger.info(f"Configured API keys for providers: {', '.join(configured_providers)}")
@@ -290,7 +304,12 @@ class IntelligentRouter:
             result = await self._route_text(request_data, opts)
 
         # ── Cache store ──────────────────────────────────────────────────────
-        if opts.cache_policy != CachePolicy.DISABLED and cache_key:
+        # Skip caching for streaming requests - the response is an async iterable
+        # that cannot be pickled. But cache if it's a dict (collected streaming response).
+        is_streaming = request_data.get("stream", False)
+        is_dict_response = isinstance(result, dict)
+
+        if opts.cache_policy != CachePolicy.DISABLED and cache_key and is_dict_response:
             self.cache.set(cache_key, result, prompt_text=self._extract_prompt_text(request_data))
 
         return result
@@ -467,6 +486,65 @@ class IntelligentRouter:
 
         raise RuntimeError(f"All providers exhausted for capability={capability}")
 
+    def _sanitize_tools_for_provider(
+        self, provider: str, tools: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Remove provider-incompatible fields from tool definitions."""
+        if not tools:
+            return tools
+
+        sanitized = []
+        for tool in tools:
+            if not isinstance(tool, dict):
+                sanitized.append(tool)
+                continue
+
+            func = tool.get("function", {})
+            if not isinstance(func, dict):
+                sanitized.append(tool)
+                continue
+
+            params = func.get("parameters")
+            if isinstance(params, dict):
+                sanitized_params = self._sanitize_json_schema(params, provider)
+                func = dict(func, parameters=sanitized_params)
+
+                if provider == "cohere":
+                    func.pop("strict", None)
+
+            sanitized.append(dict(tool, function=func))
+
+        return sanitized
+
+    def _sanitize_json_schema(self, schema: dict[str, Any], provider: str) -> dict[str, Any]:
+        """Ensure JSON schema is compatible with the target provider."""
+        if not isinstance(schema, dict):
+            return schema
+
+        schema = dict(schema)
+
+        if provider == "groq":
+            self._ensure_additional_properties_false(schema)
+
+        return schema
+
+    def _ensure_additional_properties_false(self, obj: dict[str, Any]) -> None:
+        """Recursively ensure all objects have additionalProperties: false."""
+        if not isinstance(obj, dict):
+            return
+
+        if obj.get("type") == "object":
+            if "properties" in obj and "additionalProperties" not in obj:
+                obj["additionalProperties"] = False
+
+        for value in obj.values():
+            if isinstance(value, dict):
+                self._ensure_additional_properties_false(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        self._ensure_additional_properties_false(item)
+
     async def _try_provider(
         self,
         provider: str,
@@ -476,13 +554,14 @@ class IntelligentRouter:
         start_time: float,
         original_provider: str,
         strategy: str,
-    ) -> dict[str, Any] | None:
+    ) -> dict[str, Any] | Any | None:
         """
         Attempt a single provider+model.  Handles:
           - RPM rate limits (exponential back-off, up to MAX_RETRIES)
           - Daily limits (long cooldown, return None immediately)
           - Network errors (short cooldown, return None)
         Returns a response dict on success, None to signal "try next".
+        For streaming requests (stream=True), returns an async iterable.
         """
         if not self.quota.can_accept(provider):
             logger.debug("Skipping %s — quota gate", provider)
@@ -490,17 +569,59 @@ class IntelligentRouter:
 
         params = {k: v for k, v in extra_params.items() if v is not None}
 
+        if params.get("tools"):
+            params["tools"] = self._sanitize_tools_for_provider(provider, params["tools"])
+
+        client_requested_streaming = params.get("stream", False)
+        # Check if streaming is forced by config for this provider
+        provider_forced_streaming = (
+            provider == "openai_compatible" and settings.openai_compatible_streaming
+        )
+        # Use streaming only if client requested it OR provider requires it
+        params["stream"] = client_requested_streaming or provider_forced_streaming
+        is_streaming = params["stream"]
+
         for attempt in range(1, settings.max_retries + 1):
             try:
                 self.quota.consume(provider)
                 response = await self._litellm_call(model.litellm_id, messages, params)
                 latency: float = (time.monotonic() - start_time) * 1000.0
                 self.quota.record_latency(provider, latency)
+
+                # Record successful request (increments rpd_used, resets error counters)
+                state = self.quota.states.get(provider)
+                if state:
+                    state.record_success(latency)
+
+                # Handle streaming responses - return async iterable directly
+                if is_streaming and hasattr(response, "__aiter__"):
+                    # If client didn't request streaming but provider forced it,
+                    # collect all chunks and return as single response
+                    if not client_requested_streaming:
+                        return await self._collect_streaming_response(
+                            response, provider, model, latency, strategy, original_provider
+                        )
+                    return response
+
                 return self._format_response(
                     response, provider, model, latency, strategy, original_provider
                 )
 
             except LiteLLMRateLimit as e:
+                # Some environments set LiteLLMRateLimit to a broad Exception
+                # class or the upstream error may contain a permanent-model-removed
+                # message. Detect that pattern early so we can prune the model
+                # from discovery rather than treating it as a transient rate
+                # limit.
+                try:
+                    msg = str(e).lower()
+                    if "removed" in msg and self.discovery is not None:
+                        try:
+                            self.discovery.remove_model(provider, model.model_id)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
                 delay = self._parse_retry_delay(e) or (settings.retry_base_delay * 2**attempt)
                 if self._is_daily_limit(e):
                     self.quota.mark_daily_exhausted(provider)
@@ -514,6 +635,18 @@ class IntelligentRouter:
                     return None
 
             except (LiteLLMTimeout, LiteLLMConnectionError) as e:
+                # See note above in the rate-limit handler: if the underlying
+                # exception message indicates the model was removed, ensure we
+                # remove it from discovery cache.
+                try:
+                    msg = str(e).lower()
+                    if "removed" in msg and self.discovery is not None:
+                        try:
+                            self.discovery.remove_model(provider, model.model_id)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
                 self.quota.mark_error(provider)
                 logger.warning("%s: connection/timeout — %s", provider, e)
                 return None
@@ -533,8 +666,17 @@ class IntelligentRouter:
                 except Exception:
                     pass
                 # 404 model-not-found → skip this model permanently
-                if "404" in msg or "model_not_found" in msg or "does not exist" in msg:
+                if (
+                    "404" in msg
+                    or "model_not_found" in msg
+                    or "does not exist" in msg
+                    or "not a valid model" in msg
+                ):
                     logger.warning("%s/%s: 404 — model not found", provider, model.model_id)
+                    try:
+                        self.discovery.remove_model(provider, model.model_id)
+                    except Exception:
+                        pass
                     return None
                 self.quota.mark_error(provider)
                 logger.warning("%s: unexpected error — %s", provider, e)
@@ -558,6 +700,7 @@ class IntelligentRouter:
         model_to_call: str | None = None
         messages: list[Any] = kwargs.get("messages", [])
         params: dict[str, Any] = {}
+        provider: str | None = None
 
         # Positional dispatch
         if len(args) == 3:
@@ -573,6 +716,7 @@ class IntelligentRouter:
             params = dict(args[3] or {})
             model_to_call = f"{provider}/{model}"
         elif "provider" in kwargs and "model" in kwargs:
+            provider = kwargs.get("provider")
             model_to_call = f"{kwargs.get('provider')}/{kwargs.get('model')}"
             messages = kwargs.get("messages", messages)
             params = dict(kwargs.get("params", {}))
@@ -598,6 +742,28 @@ class IntelligentRouter:
         if model_to_call is None:
             raise TypeError("_litellm_call missing model identifier")
 
+        # Infer provider from model ID if not explicitly provided
+        if provider is None and model_to_call and "/" in model_to_call:
+            possible_provider = model_to_call.split("/", 1)[0]
+            if possible_provider in PROVIDER_CATALOGUE:
+                provider = possible_provider
+
+        # Handle OpenAI-compatible custom providers
+        if provider == "openai_compatible":
+            cfg = PROVIDER_CATALOGUE.get("openai_compatible", {})
+            litellm_provider = cfg.get("litellm_provider", "custom_openai")
+            # Extract the actual model name (strip provider prefix if present)
+            actual_model = model_to_call.split("/", 1)[-1]
+            # Construct model ID with the litellm provider prefix
+            model_to_call = f"{litellm_provider}/{actual_model}"
+            if settings.openai_compatible_api_base:
+                params["api_base"] = settings.openai_compatible_api_base
+            if settings.openai_compatible_api_key:
+                params["api_key"] = settings.openai_compatible_api_key
+            # Force streaming for openai_compatible if enabled in settings
+            if settings.openai_compatible_streaming:
+                params["stream"] = True
+
         # If the model seems unqualified, leave callers to provide proper ids.
         # The tests expect provider/model concatenation when provider is
         # supplied explicitly (handled above).
@@ -608,6 +774,80 @@ class IntelligentRouter:
         if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
             return await res
         return res
+
+    async def _collect_streaming_response(
+        self,
+        async_iterable: Any,
+        provider: str,
+        model: Any,
+        latency: float,
+        strategy: str,
+        original_provider: str | None,
+    ) -> dict[str, Any]:
+        """Collect streaming response chunks into a single response."""
+        chunks = []
+        async for chunk in async_iterable:
+            chunks.append(chunk)
+
+        if not chunks:
+            return {"error": "No response from provider"}
+
+        combined_content = ""
+        first_chunk = chunks[0]
+        last_chunk = chunks[-1]
+        completion_tokens = 0
+        finish_reason = "stop"
+
+        for chunk in chunks:
+            if hasattr(chunk, "choices") and chunk.choices:
+                choice = chunk.choices[0]
+                delta = choice.delta
+                if delta and hasattr(delta, "content") and delta.content:
+                    combined_content += delta.content
+                # Try to get finish_reason from chunk
+                if hasattr(choice, "finish_reason") and choice.finish_reason:
+                    finish_reason = choice.finish_reason
+                # Try to get usage info if available
+                if hasattr(chunk, "usage") and chunk.usage:
+                    completion_tokens = getattr(chunk.usage, "completion_tokens", 0) or 0
+
+        # Get model name
+        model_name = ""
+        if hasattr(first_chunk, "model"):
+            model_name = first_chunk.model
+        elif hasattr(model, "model_id"):
+            model_name = model.model_id
+        else:
+            model_name = "unknown"
+
+        # Get created timestamp
+        created = 0
+        if hasattr(first_chunk, "created"):
+            created = first_chunk.created
+
+        result = {
+            "id": f"chatcmpl-{getattr(first_chunk, 'id', 'internal')}",
+            "created": created,
+            "model": model_name,
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "finish_reason": finish_reason,
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": combined_content,
+                    },
+                }
+            ],
+            "usage": {
+                "completion_tokens": completion_tokens,
+                "prompt_tokens": 0,
+                "total_tokens": completion_tokens,
+            },
+        }
+
+        return self._format_response(result, provider, model, latency, strategy, original_provider)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Fallback chain construction
@@ -654,41 +894,31 @@ class IntelligentRouter:
     # ══════════════════════════════════════════════════════════════════════════
 
     def _select(self, capability: str, opts: RoutingOptions) -> RouteDecision | None:
-        """Score eligible providers and pick one via weighted random."""
-        weights = _STRATEGY_WEIGHTS.get(opts.strategy, _STRATEGY_WEIGHTS[RoutingStrategy.AUTO])
+        """Select the highest priority available provider (deterministic by CLOUD_PRIORITY_ORDER)."""
         excluded = set(opts.excluded_providers) | {"ollama"}
 
-        candidates: dict[str, float] = {}
         for provider in CLOUD_PRIORITY_ORDER:
             if provider in excluded:
                 continue
             if opts.preferred_providers and provider not in opts.preferred_providers:
                 continue
-            if not self.quota.states.get(provider, ProviderState("", 0, 0)).is_available():
+            state = self.quota.states.get(provider)
+            if not state or not state.is_available():
                 continue
             model = self.discovery.get_best_model(
                 provider, capability, prefer_free=opts.free_tier_only
             )
             if model is None:
                 continue
-            score = self.quota.score(provider, **weights)
-            if score > 0:
-                candidates[provider] = score
+            # Found the highest priority available provider
+            return RouteDecision(
+                provider=provider,
+                model=model,
+                strategy=opts.strategy,
+                score=1.0,
+            )
 
-        chosen = _weighted_choice(candidates)
-        if chosen is None:
-            return None
-
-        model = self.discovery.get_best_model(chosen, capability, prefer_free=opts.free_tier_only)
-        if model is None:
-            return None
-
-        return RouteDecision(
-            provider=chosen,
-            model=model,
-            strategy=opts.strategy,
-            score=candidates[chosen],
-        )
+        return None
 
     # ══════════════════════════════════════════════════════════════════════════
     # Task-type detection
@@ -755,25 +985,41 @@ class IntelligentRouter:
 
     @staticmethod
     def _is_daily_limit(exc: Exception) -> bool:
+        """Detect if error indicates quota exhaustion or account balance issues."""
         msg = str(exc).lower()
-        return any(
-            k in msg
-            for k in (
-                "tokens per day",
-                "tpd",
-                "credit balance",
-                "depleted",
-                "daily limit",
-                "no credits",
-                "key limit exceeded",
-                "insufficient balance",
-                "permission",
-                "permission_denied",
-                "payment",
-                "not have permission",
-                "quota",
-            )
+        # Comprehensive list of quota/balance exhaustion indicators
+        exhaustion_indicators = (
+            "tokens per day",
+            "tpd",
+            "credit balance",
+            "depleted",
+            "daily limit",
+            "daily quota",
+            "no credits",
+            "key limit exceeded",
+            "insufficient balance",
+            "insufficient funds",
+            "not have permission",
+            "permission",
+            "permission_denied",
+            "payment required",
+            "quota exceeded",
+            "quota exhausted",
+            "rate limit",
+            "billing",
+            "account balance",
+            "doesn't have any credits",
+            "doesn't have any licenses",
+            "newly created team",
+            "purchase those on",
+            "upgrade your plan",
+            "plan limits",
+            "monthly limit",
+            "usage limit",
+            "max requests",
+            "threshold exceeded",
         )
+        return any(k in msg for k in exhaustion_indicators)
 
     @staticmethod
     def _parse_retry_delay(exc: Exception) -> float | None:

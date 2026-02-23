@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -18,6 +19,8 @@ from enum import StrEnum
 from typing import (
     Any,
 )
+
+logger = logging.getLogger(__name__)
 
 try:
     from pydantic import BaseModel, Field, field_validator
@@ -279,6 +282,12 @@ class ProviderState:
 
         self.circuit_open = True
         self.circuit_open_until = datetime.now(UTC) + timedelta(seconds=seconds)
+        logger.warning(
+            "Circuit breaker opened for %s — will reset in %.0f seconds (consecutive errors: %d)",
+            self.name,
+            seconds,
+            self.consecutive_errors,
+        )
 
     def set_cooldown(self, seconds: float) -> None:
         from datetime import timedelta

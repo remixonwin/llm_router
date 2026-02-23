@@ -42,6 +42,25 @@ from llm_router.router import IntelligentRouter  # type: ignore[import]
 
 logger = logging.getLogger(__name__)
 
+import secrets
+
+ROUTER_API_KEY: str | None = None
+
+
+def get_router_api_key() -> str:
+    global ROUTER_API_KEY
+    if ROUTER_API_KEY is None:
+        if settings.api_key:
+            ROUTER_API_KEY = settings.api_key
+            logger.info("ROUTER API KEY loaded from config")
+        else:
+            ROUTER_API_KEY = secrets.token_urlsafe(32)
+            logger.info("=" * 60)
+            logger.info("ROUTER API KEY (use in external apps): %s", ROUTER_API_KEY)
+            logger.info("=" * 60)
+    return ROUTER_API_KEY
+
+
 # pylint: disable=broad-except
 # Broad excepts are used deliberately in FastAPI route handlers and lifecycle
 # management to ensure we surface safe, short error messages to clients and
@@ -65,6 +84,34 @@ def get_router() -> IntelligentRouter:
 def _require_admin_token(_x_admin_token: str | None = Header(None)) -> None:
     """Admin auth dependency used by admin endpoints (no-op for tests)."""
     return None
+
+
+def _require_router_api_key(authorization: str | None = Header(None)) -> str:
+    """Validate API key for protected endpoints."""
+    import os
+
+    require_key = os.getenv("ROUTER_REQUIRE_API_KEY", "true").lower() not in ("0", "false", "no")
+
+    if not require_key:
+        return ""
+
+    configured_key = get_router_api_key()
+    if not configured_key:
+        return ""
+
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+    try:
+        scheme, key = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
+        if key != configured_key:
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+    return key
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -199,7 +246,7 @@ async def health() -> dict[str, Any]:
 
 
 @app.get("/v1/models", tags=["Discovery"])
-async def list_models() -> dict[str, Any]:
+async def list_models(_api_key: str = Depends(_require_router_api_key)) -> dict[str, Any]:
     r = get_router()
     all_models = r.discovery.get_all_models()
     return {
@@ -241,8 +288,35 @@ async def list_provider_models(provider: str) -> dict[str, Any]:
 # ── Chat completions ──────────────────────────────────────────────────────────
 
 
+ROUTER_MODEL_ALIASES = ("router", "auto", "any", "*", "gpt-4o")
+
+
+@app.post("/v1/chat/completions/chat/completions", tags=["Completions"])
+async def chat_completions_duplicated(
+    request: ChatRequest, _api_key: str = Depends(_require_router_api_key)
+) -> Any:
+    """Handle duplicate path - client is sending to /v1/chat/completions/chat/completions"""
+    return await chat_completions(request, _api_key)
+
+
+@app.get("/v1/chat/completions/models", tags=["Discovery"])
+async def list_models_wrong_path(
+    _api_key: str = Depends(_require_router_api_key),
+) -> dict[str, Any]:
+    """Handle wrong path - client is sending to /v1/chat/completions/models"""
+    return await list_models(_api_key)
+
+
+@app.get("/v1/chat/completions", tags=["Completions"])
+async def chat_completions_get(_api_key: str = Depends(_require_router_api_key)) -> dict[str, Any]:
+    """Handle GET request to /v1/chat/completions - return models list"""
+    return await list_models(_api_key)
+
+
 @app.post("/v1/chat/completions", tags=["Completions"])
-async def chat_completions(request: ChatRequest) -> Any:
+async def chat_completions(
+    request: ChatRequest, _api_key: str = Depends(_require_router_api_key)
+) -> Any:
     """Handle chat completion requests; supports streaming via SSE."""
     r = get_router()
     try:
@@ -255,7 +329,7 @@ async def chat_completions(request: ChatRequest) -> Any:
             "tools": request.tools,
             "tool_choice": request.tool_choice,
         }
-        if request.model:
+        if request.model and request.model.lower() not in ROUTER_MODEL_ALIASES:
             request_data["model"] = request.model
 
         # If the client requested streaming, route with stream and return a
@@ -271,12 +345,50 @@ async def chat_completions(request: ChatRequest) -> Any:
                     # the full JSON as a single event.
                     if hasattr(async_iterable, "__aiter__"):
                         async for chunk in async_iterable:
-                            # Normalize chunk to string
                             try:
-                                s = chunk if isinstance(chunk, str) else json.dumps(chunk)
+                                # Extract delta for proper SSE format (OpenAI-compatible)
+                                delta = None
+                                finish_reason = None
+
+                                if hasattr(chunk, "model_dump"):
+                                    d = chunk.model_dump()
+                                elif hasattr(chunk, "dict"):
+                                    d = chunk.dict()
+                                else:
+                                    d = chunk if isinstance(chunk, dict) else {}
+
+                                # Extract delta content from chunk
+                                if isinstance(d, dict):
+                                    choices = d.get("choices", [])
+                                    if choices and len(choices) > 0:
+                                        delta = choices[0].get("delta", {})
+                                        finish_reason = choices[0].get("finish_reason")
+
+                                # Build OpenAI-compatible delta response
+                                if delta:
+                                    delta_response = {
+                                        "id": d.get("id", ""),
+                                        "object": "chat.completion.chunk",
+                                        "created": d.get("created", 0),
+                                        "model": d.get("model", ""),
+                                        "choices": [
+                                            {
+                                                "index": 0,
+                                                "delta": delta,
+                                                "finish_reason": finish_reason,
+                                            }
+                                        ],
+                                    }
+                                    s = json.dumps(delta_response)
+                                else:
+                                    # Fallback to full chunk
+                                    s = json.dumps(d) if not isinstance(d, str) else d
                             except Exception:
                                 s = str(chunk)
                             yield f"data: {s}\n\n"
+
+                        # Send done signal
+                        yield "data: [DONE]\n\n"
                     else:
                         # Non-iterable result: return as single event
                         try:
@@ -311,7 +423,9 @@ async def chat_completions(request: ChatRequest) -> Any:
 
 
 @app.post("/v1/embeddings", tags=["Embeddings"])
-async def embeddings(request: EmbedRequest) -> Any:
+async def embeddings(
+    request: EmbedRequest, _api_key: str = Depends(_require_router_api_key)
+) -> Any:
     """Create embeddings for provided input using the routing layer."""
     r = get_router()
     try:
@@ -331,7 +445,9 @@ async def embeddings(request: EmbedRequest) -> Any:
 
 
 @app.post("/v1/vision", tags=["Vision"])
-async def vision(request: VisionTaskRequest) -> Any:
+async def vision(
+    request: VisionTaskRequest, _api_key: str = Depends(_require_router_api_key)
+) -> Any:
     """Handle vision tasks (classify/detect/ocr/qa/caption)."""
     r = get_router()
     if not request.image_url and not request.image_base64:
@@ -443,16 +559,20 @@ async def global_exception_handler(_request: Request, exc: Exception) -> JSONRes
 
 def main():
     import argparse
+    from pathlib import Path
 
     import uvicorn  # type: ignore[import]
     from dotenv import load_dotenv  # type: ignore[import]
 
-    # Load local .env only when starting via the CLI entrypoint. This avoids
-    # surprising side-effects during unit tests or library imports.
+    env_path = Path(__file__).parent.parent.parent / ".env"
     try:
-        load_dotenv()
+        load_dotenv(env_path, override=False)
     except Exception:
         logger.debug("No .env loaded or python-dotenv not available")
+
+    from llm_router.config import settings
+
+    get_router_api_key()
 
     parser = argparse.ArgumentParser(description="Start the LLM Router server.")
     parser.add_argument("--host", default=settings.host, help="Host to bind to")

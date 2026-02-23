@@ -5,6 +5,7 @@ WORKDIR /app
 # Install system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only necessary files
@@ -20,6 +21,6 @@ RUN if [ -f pyproject.toml ]; then \
       pip install --no-cache-dir . ; \
     fi
 
-EXPOSE 7544
+EXPOSE 8001
 
 CMD ["python", "-m", "llm_router.server"]

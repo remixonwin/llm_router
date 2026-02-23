@@ -4,6 +4,8 @@ config.py — Centralised configuration for the Intelligent LLM Router
 All provider endpoints, quota limits, capability catalogs, and tunable knobs
 live here.  Nothing is hard-coded deeper in the stack; everything referencing
 a provider name looks it up in these dictionaries.
+
+Uses pydantic-settings with environment variable support.
 """
 
 from __future__ import annotations
@@ -11,79 +13,145 @@ from __future__ import annotations
 import os
 from typing import Any
 
+try:
+    from pydantic_settings import BaseSettings
 
-def _env_bool(key: str, default: bool) -> bool:
-    val = os.getenv(key, "").lower()
-    if val in ("1", "true", "yes"):
-        return True
-    if val in ("0", "false", "no"):
-        return False
-    return default
+    class Settings(BaseSettings):
+        """Settings for the LLM Router using pydantic-settings."""
+
+        model_config = {"env_prefix": "ROUTER_", "extra": "ignore"}
+
+        host: str = "0.0.0.0"
+        port: int = 8001
+        api_key: str = ""
+        require_api_key: bool = True
+        log_level: str = "INFO"
+        debug: bool = False
+
+        llm_timeout: int = 60
+        discovery_timeout: int = 10
+        discovery_retries: int = 3
+        ollama_discovery_retries: int = 1
+        ollama_discovery_log_level: str = "DEBUG"
+
+        cache_dir: str = "/tmp/llm_router_cache"
+        response_cache_ttl: int = 3600
+        capability_cache_ttl: int = 3600
+        cache_max_size_mb: int = 512
+        semantic_cache_enabled: bool = True
+        exact_cache_enabled: bool = True
+
+        default_strategy: str = "auto"
+        max_retries: int = 3
+        retry_base_delay: float = 1.0
+        daily_quota_cooldown_seconds: int = 3600
+        enable_ollama_fallback: bool = True
+        model_refresh_interval: int = 3600
+        verbose_litellm: bool = False
+        verbose_litellm_internals: bool = False
+        auth_failure_cooldown_seconds: int = 86400
+
+        ollama_api_base: str = "http://localhost:11434"
+
+        openai_compatible_api_base: str = ""
+        openai_compatible_models: str = ""
+        openai_compatible_streaming: bool = True
+
+        @property
+        def openai_compatible_api_key(self) -> str:
+            return os.getenv("ROUTER_OPENAI_COMPATIBLE_API_KEY", "")
+
+        cors_allowed_origins: str = ""
+        cors_allow_all: bool = True
+
+        @property
+        def cors_origins(self) -> list[str]:
+            if self.cors_allow_all:
+                return ["*"]
+            raw = (self.cors_allowed_origins or "").strip()
+            if not raw:
+                return []
+            return [o.strip() for o in raw.split(",") if o.strip()]
 
 
-class Settings:
-    """
-    Simple settings object populated from environment variables.
-    Compatible with or without pydantic / pydantic-settings.
-    """
+except ImportError:
 
-    # Server
-    host: str = os.getenv("ROUTER_HOST", "0.0.0.0")
-    port: int = int(os.getenv("ROUTER_PORT", "7544"))
-    log_level: str = os.getenv("LOG_LEVEL", "INFO")
-    debug: bool = _env_bool("DEBUG", False)
+    class Settings:
+        """Simple settings object populated from environment variables (fallback)."""
 
-    # Timeouts
-    llm_timeout: int = int(os.getenv("LLM_TIMEOUT", "60"))
-    discovery_timeout: int = int(os.getenv("DISCOVERY_TIMEOUT", "10"))
-    # Discovery retries
-    discovery_retries: int = int(os.getenv("DISCOVERY_RETRIES", "3"))
-    # Ollama-specific discovery tuning (local fallback)
-    ollama_discovery_retries: int = int(os.getenv("OLLAMA_DISCOVERY_RETRIES", "1"))
-    ollama_discovery_log_level: str = os.getenv("OLLAMA_DISCOVERY_LOG_LEVEL", "DEBUG")
+        def __init__(self) -> None:
+            self.host = os.getenv("ROUTER_HOST", "0.0.0.0")
+            self.port = int(os.getenv("ROUTER_PORT", "8001"))
+            self.api_key = os.getenv("ROUTER_API_KEY", "")
+            self.require_api_key = os.getenv("ROUTER_REQUIRE_API_KEY", "true").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            self.log_level = os.getenv("ROUTER_LOG_LEVEL", "INFO")
+            self.debug = os.getenv("ROUTER_DEBUG", "").lower() in ("1", "true", "yes")
+            self.llm_timeout = int(os.getenv("ROUTER_LLM_TIMEOUT", "60"))
+            self.discovery_timeout = int(os.getenv("ROUTER_DISCOVERY_TIMEOUT", "10"))
+            self.discovery_retries = int(os.getenv("ROUTER_DISCOVERY_RETRIES", "3"))
+            self.ollama_discovery_retries = int(os.getenv("ROUTER_OLLAMA_DISCOVERY_RETRIES", "1"))
+            self.ollama_discovery_log_level = os.getenv(
+                "ROUTER_OLLAMA_DISCOVERY_LOG_LEVEL", "DEBUG"
+            )
+            self.cache_dir = os.getenv("ROUTER_CACHE_DIR", "/tmp/llm_router_cache")
+            self.response_cache_ttl = int(os.getenv("ROUTER_RESPONSE_CACHE_TTL", "3600"))
+            self.capability_cache_ttl = int(os.getenv("ROUTER_CAPABILITY_CACHE_TTL", "3600"))
+            self.cache_max_size_mb = int(os.getenv("ROUTER_CACHE_MAX_SIZE_MB", "512"))
+            self.semantic_cache_enabled = os.getenv(
+                "ROUTER_SEMANTIC_CACHE_ENABLED", ""
+            ).lower() in ("1", "true", "yes")
+            self.exact_cache_enabled = os.getenv("ROUTER_EXACT_CACHE_ENABLED", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            self.default_strategy = os.getenv("ROUTER_DEFAULT_STRATEGY", "auto")
+            self.max_retries = int(os.getenv("ROUTER_MAX_RETRIES", "3"))
+            self.retry_base_delay = float(os.getenv("ROUTER_RETRY_BASE_DELAY", "1.0"))
+            self.daily_quota_cooldown_seconds = int(
+                os.getenv("ROUTER_DAILY_QUOTA_COOLDOWN_SECONDS", "3600")
+            )
+            self.enable_ollama_fallback = os.getenv(
+                "ROUTER_ENABLE_OLLAMA_FALLBACK", ""
+            ).lower() in ("1", "true", "yes")
+            self.model_refresh_interval = int(os.getenv("ROUTER_MODEL_REFRESH_INTERVAL", "3600"))
+            self.verbose_litellm = os.getenv("ROUTER_VERBOSE_LITELLM", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            self.verbose_litellm_internals = os.getenv(
+                "ROUTER_VERBOSE_LITELLM_INTERNALS", ""
+            ).lower() in ("1", "true", "yes")
+            self.auth_failure_cooldown_seconds = int(
+                os.getenv("ROUTER_AUTH_FAILURE_COOLDOWN_SECONDS", "86400")
+            )
+            self.ollama_api_base = os.getenv("ROUTER_OLLAMA_API_BASE", "http://localhost:11434")
+            self.openai_compatible_api_base = os.getenv("ROUTER_OPENAI_COMPATIBLE_API_BASE", "")
+            self.openai_compatible_api_key = os.getenv("ROUTER_OPENAI_COMPATIBLE_API_KEY", "")
+            self.openai_compatible_models = os.getenv("ROUTER_OPENAI_COMPATIBLE_MODELS", "")
+            self.openai_compatible_streaming = os.getenv(
+                "ROUTER_OPENAI_COMPATIBLE_STREAMING", "true"
+            ).lower() in ("1", "true", "yes")
+            self.cors_allowed_origins = os.getenv("ROUTER_CORS_ALLOWED_ORIGINS", "")
+            self.cors_allow_all = os.getenv("ROUTER_CORS_ALLOW_ALL", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
 
-    # Cache
-    cache_dir: str = os.getenv("CACHE_DIR", "/tmp/llm_router_cache")
-    response_cache_ttl: int = int(os.getenv("RESPONSE_CACHE_TTL", "3600"))
-    capability_cache_ttl: int = int(os.getenv("CAPABILITY_CACHE_TTL", "3600"))
-    cache_max_size_mb: int = int(os.getenv("CACHE_MAX_SIZE_MB", "512"))
-    semantic_cache_enabled: bool = _env_bool("SEMANTIC_CACHE_ENABLED", True)
-    exact_cache_enabled: bool = _env_bool("EXACT_CACHE_ENABLED", True)
-
-    # Routing
-    default_strategy: str = os.getenv("DEFAULT_STRATEGY", "auto")
-    max_retries: int = int(os.getenv("MAX_RETRIES", "3"))
-    retry_base_delay: float = float(os.getenv("RETRY_BASE_DELAY", "1.0"))
-    daily_quota_cooldown_seconds: int = int(os.getenv("DAILY_QUOTA_COOLDOWN_SECONDS", "3600"))
-    enable_ollama_fallback: bool = _env_bool("ENABLE_OLLAMA_FALLBACK", True)
-    model_refresh_interval: int = int(os.getenv("MODEL_REFRESH_INTERVAL", "3600"))
-    verbose_litellm: bool = _env_bool("VERBOSE_LITELLM", False)
-    # When true, include deeper litellm internal structures in debug logs.
-    # Default False to avoid leaking internal objects into logs.
-    verbose_litellm_internals: bool = _env_bool("VERBOSE_LITELLM_INTERNALS", False)
-    auth_failure_cooldown_seconds: int = int(os.getenv("AUTH_FAILURE_COOLDOWN_SECONDS", "86400"))
-
-    # Ollama
-    ollama_base_url: str = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
-
-    # CORS
-    cors_allowed_origins: str = os.getenv("CORS_ALLOWED_ORIGINS", "")
-    cors_allow_all: bool = _env_bool("CORS_ALLOW_ALL", True)
-
-    @property
-    def cors_origins(self) -> list:
-        """Return a list of allowed CORS origins. Empty list means none.
-
-        The environment variable `CORS_ALLOWED_ORIGINS` may contain a
-        comma-separated list of origins. In production you should set
-        `CORS_ALLOW_ALL=false` and provide a list of allowed origins.
-        """
-        if self.cors_allow_all:
-            return ["*"]
-        raw = (self.cors_allowed_origins or "").strip()
-        if not raw:
-            return []
-        return [o.strip() for o in raw.split(",") if o.strip()]
+        @property
+        def cors_origins(self) -> list[str]:
+            if self.cors_allow_all:
+                return ["*"]
+            raw = (self.cors_allowed_origins or "").strip()
+            if not raw:
+                return []
+            return [o.strip() for o in raw.split(",") if o.strip()]
 
 
 settings = Settings()
@@ -225,11 +293,22 @@ PROVIDER_CATALOGUE: dict[str, dict[str, Any]] = {
         "free_tier": False,
         "capabilities": {"text", "chat", "vision", "function_calling"},
     },
+    "openai_compatible": {
+        "api_key_env": "OPENAI_COMPATIBLE_API_KEY",
+        "base_url": None,
+        "models_url": None,
+        "rpm_limit": 60,
+        "rpd_limit": 10_000,
+        "priority": 50,
+        "free_tier": False,
+        "capabilities": {"text", "chat", "vision", "function_calling", "embedding"},
+        "litellm_provider": "custom_openai",
+    },
     # ── Local fallback — MUST remain last ────────────────────────────────────
     "ollama": {
         "api_key_env": None,
-        "base_url": settings.ollama_base_url,
-        "models_url": f"{settings.ollama_base_url}/api/tags",
+        "base_url": settings.ollama_api_base,
+        "models_url": f"{settings.ollama_api_base}/api/tags",
         "rpm_limit": 10_000,
         "rpd_limit": 10_000_000,
         "priority": 999,  # never wins cloud selection
@@ -528,6 +607,14 @@ BOOTSTRAP_MODELS: dict[str, list[dict[str, Any]]] = {
             "context": 200_000,
             "rpm": 60,
             "capabilities": {"text", "chat", "vision", "function_calling"},
+        },
+    ],
+    "openai_compatible": [
+        {
+            "id": "jimmy",
+            "context": 128_000,
+            "rpm": 60,
+            "capabilities": {"text", "chat", "function_calling"},
         },
     ],
     "ollama": [

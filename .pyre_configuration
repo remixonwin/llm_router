@@ -1,0 +1,14 @@
+{
+  "source_directories": ["src"],
+  "search_path": ["src"],
+  "exclude": [
+    ".venv",
+    "build",
+    "dist",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "llm_router.egg-info"
+  ],
+  "strict": false
+}
