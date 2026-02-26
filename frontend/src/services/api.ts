@@ -1,4 +1,4 @@
-import {
+import type {
   HealthStatus,
   ProvidersResponse,
   ModelsResponse,
@@ -7,7 +7,7 @@ import {
   AdminResponse,
 } from '../types';
 
-const API_BASE = '/api';
+const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${endpoint}`, {
