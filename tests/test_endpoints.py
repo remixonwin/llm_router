@@ -1,6 +1,5 @@
-import pytest
 import httpx
-
+import pytest
 
 BASE_URL = "http://localhost:7440"
 TIMEOUT = 30.0

@@ -28,7 +28,14 @@ from typing import Any
 # Do NOT load dotenv at module import time in production-ready code. Loading
 # env files should happen at process start (main) so libraries importing this
 # module in other contexts don't have side effects.
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, StaticFiles  # type: ignore[import]
+from fastapi import (  # type: ignore[import]
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    StaticFiles,
+)
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import]
 from fastapi.responses import JSONResponse, StreamingResponse  # type: ignore[import]
 from pydantic import BaseModel, Field  # type: ignore[import]
@@ -182,7 +189,9 @@ app.add_middleware(
 app.include_router(admin_router)
 
 # Mount static files for the frontend if they exist
-frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist")
+frontend_dist = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist"
+)
 if os.path.exists(frontend_dist):
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 

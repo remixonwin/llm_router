@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../../services/api';
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "../../services/api";
 import {
   Plus,
   Trash2,
@@ -15,12 +15,12 @@ import {
   ToggleLeft,
   ToggleRight,
   X,
-} from 'lucide-react';
+} from "lucide-react";
 import type {
   OpenAICompatibleEndpoint,
   CreateOpenAICompatibleRequest,
   TestEndpointResponse,
-} from '../../types';
+} from "../../types";
 
 function EndpointCard({
   endpoint,
@@ -44,20 +44,16 @@ function EndpointCard({
           <Server className="h-5 w-5 text-gray-500" />
           <div>
             <h4 className="font-medium text-gray-900">{endpoint.name}</h4>
-            <p className="text-sm text-gray-500 truncate max-w-xs">
-              {endpoint.base_url}
-            </p>
+            <p className="text-sm text-gray-500 truncate max-w-xs">{endpoint.base_url}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <span
             className={`px-2 py-1 text-xs font-medium rounded ${
-              endpoint.enabled
-                ? 'bg-green-100 text-green-700'
-                : 'bg-gray-100 text-gray-500'
+              endpoint.enabled ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
             }`}
           >
-            {endpoint.enabled ? 'Enabled' : 'Disabled'}
+            {endpoint.enabled ? "Enabled" : "Disabled"}
           </span>
         </div>
       </div>
@@ -67,7 +63,7 @@ function EndpointCard({
           <div className="flex items-center gap-2 text-sm">
             <span className="text-gray-500">API Key:</span>
             <span className="font-mono text-gray-700">
-              {showKey ? endpoint.api_key : '••••••••'}
+              {showKey ? endpoint.api_key : "••••••••"}
             </span>
             <button
               onClick={() => setShowKey(!showKey)}
@@ -85,8 +81,8 @@ function EndpointCard({
         )}
         <div className="flex items-center gap-2 text-sm">
           <span className="text-gray-500">Streaming:</span>
-          <span className={endpoint.streaming ? 'text-green-600' : 'text-gray-400'}>
-            {endpoint.streaming ? 'Enabled' : 'Disabled'}
+          <span className={endpoint.streaming ? "text-green-600" : "text-gray-400"}>
+            {endpoint.streaming ? "Enabled" : "Disabled"}
           </span>
         </div>
       </div>
@@ -143,10 +139,10 @@ function EndpointForm({
   onSave: (data: CreateOpenAICompatibleRequest) => void;
   onCancel: () => void;
 }) {
-  const [name, setName] = useState(endpoint?.name || '');
-  const [baseUrl, setBaseUrl] = useState(endpoint?.base_url || '');
-  const [apiKey, setApiKey] = useState(endpoint?.api_key || '');
-  const [models, setModels] = useState(endpoint?.models || '');
+  const [name, setName] = useState(endpoint?.name || "");
+  const [baseUrl, setBaseUrl] = useState(endpoint?.base_url || "");
+  const [apiKey, setApiKey] = useState(endpoint?.api_key || "");
+  const [models, setModels] = useState(endpoint?.models || "");
   const [streaming, setStreaming] = useState(endpoint?.streaming ?? true);
   const [enabled, setEnabled] = useState(endpoint?.enabled ?? true);
   const [showKey, setShowKey] = useState(false);
@@ -154,7 +150,7 @@ function EndpointForm({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave({
-      name: name || baseUrl.split('/').slice(0, 3).join('/'),
+      name: name || baseUrl.split("/").slice(0, 3).join("/"),
       base_url: baseUrl,
       api_key: apiKey || null,
       models,
@@ -166,7 +162,7 @@ function EndpointForm({
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-lg border border-gray-200 p-4">
       <h4 className="font-medium text-gray-900 mb-4">
-        {endpoint ? 'Edit Endpoint' : 'Add New Endpoint'}
+        {endpoint ? "Edit Endpoint" : "Add New Endpoint"}
       </h4>
 
       <div className="space-y-4">
@@ -177,7 +173,7 @@ function EndpointForm({
           <input
             type="text"
             value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
+            onChange={e => setBaseUrl(e.target.value)}
             placeholder="https://api.example.com/v1"
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             required
@@ -185,27 +181,23 @@ function EndpointForm({
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Name (optional)
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Name (optional)</label>
           <input
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={e => setName(e.target.value)}
             placeholder="My API"
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            API Key (optional)
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">API Key (optional)</label>
           <div className="relative">
             <input
-              type={showKey ? 'text' : 'password'}
+              type={showKey ? "text" : "password"}
               value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
+              onChange={e => setApiKey(e.target.value)}
               placeholder="sk-..."
               className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
@@ -226,7 +218,7 @@ function EndpointForm({
           <input
             type="text"
             value={models}
-            onChange={(e) => setModels(e.target.value)}
+            onChange={e => setModels(e.target.value)}
             placeholder="model1,model2"
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
@@ -240,7 +232,7 @@ function EndpointForm({
             <input
               type="checkbox"
               checked={streaming}
-              onChange={(e) => setStreaming(e.target.checked)}
+              onChange={e => setStreaming(e.target.checked)}
               className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
             />
             <span className="text-sm text-gray-700">Enable Streaming</span>
@@ -250,7 +242,7 @@ function EndpointForm({
             <input
               type="checkbox"
               checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
+              onChange={e => setEnabled(e.target.checked)}
               className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
             />
             <span className="text-sm text-gray-700">Enabled</span>
@@ -270,7 +262,7 @@ function EndpointForm({
           type="submit"
           className="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700"
         >
-          {endpoint ? 'Save Changes' : 'Add Endpoint'}
+          {endpoint ? "Save Changes" : "Add Endpoint"}
         </button>
       </div>
     </form>
@@ -282,54 +274,59 @@ export function OpenAICompatible() {
   const [editingEndpoint, setEditingEndpoint] = useState<OpenAICompatibleEndpoint | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [notification, setNotification] = useState<{
-    type: 'success' | 'error';
+    type: "success" | "error";
     message: string;
   } | null>(null);
   const [testResult, setTestResult] = useState<TestEndpointResponse | null>(null);
 
-  const showNotification = (type: 'success' | 'error', message: string) => {
+  const showNotification = (type: "success" | "error", message: string) => {
     setNotification({ type, message });
     setTimeout(() => setNotification(null), 4000);
   };
 
-  const { data: endpoints, isLoading, error, refetch } = useQuery({
-    queryKey: ['openaiCompatibleEndpoints'],
+  const {
+    data: endpoints,
+    isLoading,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ["openaiCompatibleEndpoints"],
     queryFn: api.getOpenAICompatibleEndpoints,
   });
 
   const createMutation = useMutation({
     mutationFn: api.createOpenAICompatibleEndpoint,
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['openaiCompatibleEndpoints'] });
+    onSuccess: data => {
+      queryClient.invalidateQueries({ queryKey: ["openaiCompatibleEndpoints"] });
       setIsAdding(false);
-      showNotification('success', data.message);
+      showNotification("success", data.message);
     },
     onError: (err: Error) => {
-      showNotification('error', err.message);
+      showNotification("error", err.message);
     },
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, endpoint }: { id: string; endpoint: CreateOpenAICompatibleRequest }) =>
       api.updateOpenAICompatibleEndpoint(id, endpoint),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['openaiCompatibleEndpoints'] });
+    onSuccess: data => {
+      queryClient.invalidateQueries({ queryKey: ["openaiCompatibleEndpoints"] });
       setEditingEndpoint(null);
-      showNotification('success', data.message);
+      showNotification("success", data.message);
     },
     onError: (err: Error) => {
-      showNotification('error', err.message);
+      showNotification("error", err.message);
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: api.deleteOpenAICompatibleEndpoint,
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['openaiCompatibleEndpoints'] });
-      showNotification('success', data.message);
+    onSuccess: data => {
+      queryClient.invalidateQueries({ queryKey: ["openaiCompatibleEndpoints"] });
+      showNotification("success", data.message);
     },
     onError: (err: Error) => {
-      showNotification('error', err.message);
+      showNotification("error", err.message);
     },
   });
 
@@ -344,22 +341,22 @@ export function OpenAICompatible() {
         enabled: !endpoint.enabled,
       });
     },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['openaiCompatibleEndpoints'] });
-      showNotification('success', data.message);
+    onSuccess: data => {
+      queryClient.invalidateQueries({ queryKey: ["openaiCompatibleEndpoints"] });
+      showNotification("success", data.message);
     },
     onError: (err: Error) => {
-      showNotification('error', err.message);
+      showNotification("error", err.message);
     },
   });
 
   const testMutation = useMutation({
     mutationFn: api.testOpenAICompatibleEndpoint,
-    onSuccess: (data) => {
+    onSuccess: data => {
       setTestResult(data);
     },
     onError: (err: Error) => {
-      showNotification('error', err.message);
+      showNotification("error", err.message);
     },
   });
 
@@ -392,7 +389,8 @@ export function OpenAICompatible() {
         <div>
           <h3 className="text-lg font-semibold text-gray-900">OpenAI Compatible Endpoints</h3>
           <p className="text-sm text-gray-500">
-            Configure custom OpenAI-compatible API endpoints. Each endpoint can be used as a provider.
+            Configure custom OpenAI-compatible API endpoints. Each endpoint can be used as a
+            provider.
           </p>
         </div>
         <button
@@ -407,12 +405,12 @@ export function OpenAICompatible() {
       {notification && (
         <div
           className={`flex items-center gap-2 p-4 rounded-lg ${
-            notification.type === 'success'
-              ? 'bg-green-50 text-green-700 border border-green-200'
-              : 'bg-red-50 text-red-700 border border-red-200'
+            notification.type === "success"
+              ? "bg-green-50 text-green-700 border border-green-200"
+              : "bg-red-50 text-red-700 border border-red-200"
           }`}
         >
-          {notification.type === 'success' ? (
+          {notification.type === "success" ? (
             <CheckCircle className="h-5 w-5" />
           ) : (
             <AlertCircle className="h-5 w-5" />
@@ -425,8 +423,8 @@ export function OpenAICompatible() {
         <div
           className={`flex items-start gap-2 p-4 rounded-lg ${
             testResult.success
-              ? 'bg-green-50 text-green-700 border border-green-200'
-              : 'bg-red-50 text-red-700 border border-red-200'
+              ? "bg-green-50 text-green-700 border border-green-200"
+              : "bg-red-50 text-red-700 border border-red-200"
           }`}
         >
           {testResult.success ? (
@@ -437,9 +435,7 @@ export function OpenAICompatible() {
           <div className="flex-1">
             <p className="font-medium">{testResult.message}</p>
             {testResult.models && testResult.models.length > 0 && (
-              <p className="text-sm mt-1">
-                Models: {testResult.models.join(', ')}
-              </p>
+              <p className="text-sm mt-1">Models: {testResult.models.join(", ")}</p>
             )}
           </div>
           <button onClick={() => setTestResult(null)} className="text-gray-400 hover:text-gray-600">
@@ -451,7 +447,7 @@ export function OpenAICompatible() {
       {(isAdding || editingEndpoint) && (
         <EndpointForm
           endpoint={editingEndpoint || undefined}
-          onSave={(data) => {
+          onSave={data => {
             if (editingEndpoint) {
               updateMutation.mutate({ id: editingEndpoint.id, endpoint: data });
             } else {
@@ -467,7 +463,7 @@ export function OpenAICompatible() {
 
       {endpoints && endpoints.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {endpoints.map((endpoint) => (
+          {endpoints.map(endpoint => (
             <EndpointCard
               key={endpoint.id}
               endpoint={endpoint}
@@ -497,7 +493,8 @@ export function OpenAICompatible() {
 
       <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
         <p className="text-sm text-yellow-700">
-          <strong>Note:</strong> After adding, updating, or removing endpoints, restart the router for changes to take effect.
+          <strong>Note:</strong> After adding, updating, or removing endpoints, restart the router
+          for changes to take effect.
         </p>
       </div>
     </div>

@@ -60,7 +60,7 @@ export interface StatsResponse {
 }
 
 export interface AdminResponse {
-  status: 'ok' | 'error';
+  status: "ok" | "error";
   message: string;
 }
 

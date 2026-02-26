@@ -83,10 +83,7 @@ export const api = {
       body: JSON.stringify(endpoint),
     }),
 
-  updateOpenAICompatibleEndpoint: (
-    id: string,
-    endpoint: CreateOpenAICompatibleRequest
-  ) =>
+  updateOpenAICompatibleEndpoint: (id: string, endpoint: CreateOpenAICompatibleRequest) =>
     fetchApi<AdminResponse>(`/admin/api-keys/openai-compatible/${id}`, {
       method: "PUT",
       body: JSON.stringify(endpoint),

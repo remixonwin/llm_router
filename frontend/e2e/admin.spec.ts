@@ -29,4 +29,29 @@ test.describe("Admin Page", () => {
     await expect(page).toHaveURL("/");
     await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
   });
+
+  test("should display OpenAI-compatible section", async ({ page }) => {
+    await expect(page.getByRole("heading", { name: "OpenAI Compatible Endpoints" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Add Endpoint/i })).toBeVisible();
+  });
+
+  test("should add new OpenAI-compatible endpoint", async ({ page }) => {
+    await page.getByRole("button", { name: /Add Endpoint/i }).click();
+
+    await page.getByLabel("Base URL").fill("http://host.docker.internal:7330/v1");
+    await page.getByLabel("Default Models").fill("llama-3.1-8b");
+    await page.getByRole("button", { name: "Add Endpoint" }).click();
+
+    await expect(page.getByText("http://host.docker.internal:7330/v1")).toBeVisible();
+  });
+
+  test("should test OpenAI-compatible endpoint connection", async ({ page }) => {
+    await expect(page.getByText("http://host.docker.internal:7330/v1")).toBeVisible();
+
+    await page.getByRole("button", { name: /Test/i }).first().click();
+
+    await expect(page.getByText(/success|connected/i, { exact: false })).toBeVisible({
+      timeout: 10000,
+    });
+  });
 });
