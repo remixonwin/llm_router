@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { RefreshCw, TrendingUp, Database, Server } from 'lucide-react';
-import { ProviderStats } from '../../types';
+import type { ProviderStats } from '../../types';
 
 function UsageBar({
   used,

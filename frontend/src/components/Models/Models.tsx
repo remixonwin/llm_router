@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { Search, Filter, RefreshCw } from 'lucide-react';
-import { Model } from '../../types';
+import type { Model } from '../../types';
 
 function CapabilityBadge({ capability }: { capability: string }) {
   const colors: Record<string, string> = {

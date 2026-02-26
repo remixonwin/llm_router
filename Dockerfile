@@ -24,14 +24,14 @@ COPY --from=builder /build/src /app/src
 ENV PYTHONPATH=/app/src:/root/.local/lib/python3.11/site-packages \
     PYTHONUNBUFFERED=1 \
     ROUTER_HOST=0.0.0.0 \
-    ROUTER_PORT=7440 \
+    ROUTER_PORT=7650 \
     ROUTER_CACHE_DIR=/tmp/llm_router_cache \
     ROUTER_REQUIRE_API_KEY=false \
     ROUTER_LOG_LEVEL=INFO
 
-EXPOSE 7440
+EXPOSE 7650
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:7440/health || exit 1
+    CMD curl -f http://localhost:7650/health || exit 1
 
 ENTRYPOINT ["python", "-m", "llm_router.server"]
