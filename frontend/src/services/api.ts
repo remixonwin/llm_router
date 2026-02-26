@@ -5,15 +5,26 @@ import type {
   ProviderModelsResponse,
   StatsResponse,
   AdminResponse,
+  ApiKeyStatus,
+  SetApiKeyRequest,
 } from '../types';
 
 const API_BASE = '/api';
+
+const ROUTER_API_KEY = 'remixonwin';
+
+function getAuthHeaders() {
+  return {
+    Authorization: `Bearer ${ROUTER_API_KEY}`,
+  };
+}
 
 async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...getAuthHeaders(),
       ...options?.headers,
     },
   });
@@ -49,4 +60,17 @@ export const api = {
 
   refreshModels: () =>
     fetchApi<AdminResponse>('/admin/refresh', { method: 'POST' }),
+
+  getApiKeys: () => fetchApi<ApiKeyStatus[]>('/admin/api-keys'),
+
+  setApiKey: (provider: string, apiKey: string) =>
+    fetchApi<AdminResponse>(`/admin/api-keys/${provider}`, {
+      method: 'POST',
+      body: JSON.stringify({ api_key: apiKey } as SetApiKeyRequest),
+    }),
+
+  deleteApiKey: (provider: string) =>
+    fetchApi<AdminResponse>(`/admin/api-keys/${provider}`, {
+      method: 'DELETE',
+    }),
 };

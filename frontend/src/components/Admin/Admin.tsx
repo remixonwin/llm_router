@@ -8,6 +8,7 @@ import {
   CheckCircle,
   AlertCircle,
 } from 'lucide-react';
+import { ApiKeys } from './ApiKeys';
 
 interface ActionButtonProps {
   onClick: () => void;
@@ -168,6 +169,10 @@ export function Admin() {
           description="Update model capabilities from all providers"
           variant="info"
         />
+      </div>
+
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <ApiKeys />
       </div>
     </div>
   );

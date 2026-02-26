@@ -63,3 +63,13 @@ export interface AdminResponse {
   status: 'ok' | 'error';
   message: string;
 }
+
+export interface ApiKeyStatus {
+  provider: string;
+  has_key: boolean;
+  key_masked: string | null;
+}
+
+export interface SetApiKeyRequest {
+  api_key: string;
+}

@@ -34,6 +34,7 @@ from fastapi.responses import JSONResponse, StreamingResponse  # type: ignore[im
 from pydantic import BaseModel, Field  # type: ignore[import]
 
 from llm_router.config import PROVIDER_CATALOGUE, settings  # type: ignore[import]
+from llm_router.admin import router as admin_router  # type: ignore[import]
 from llm_router.models import (  # type: ignore[import]
     RoutingOptions,
     TaskType,
@@ -177,6 +178,8 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept", "User-Agent"],
 )
+
+app.include_router(admin_router)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
