@@ -11,11 +11,10 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from llm_router.config import PROVIDER_CATALOGUE
@@ -65,8 +64,8 @@ def _require_router_api_key(authorization: str | None = Header(None)) -> str:
             raise HTTPException(status_code=401, detail="Invalid or missing API key")
         if key != configured_key:
             raise HTTPException(status_code=401, detail="Invalid or missing API key")
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    except ValueError as err:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key") from err
 
     return key
 
@@ -92,7 +91,7 @@ def _load_env_file() -> dict[str, str]:
     """Load environment variables from .env file."""
     env_vars: dict[str, str] = {}
     if ENV_FILE_PATH.exists():
-        with open(ENV_FILE_PATH, "r") as f:
+        with open(ENV_FILE_PATH) as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:

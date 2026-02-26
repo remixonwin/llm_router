@@ -106,7 +106,7 @@ def _parse_openai_compatible_models(provider: str) -> list[ModelRecord]:
     return records
 
 
-from llm_router.models import ModelRecord  # type: ignore[import]
+from llm_router.models import ModelRecord  # type: ignore[import]  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

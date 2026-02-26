@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../services/api";
 import { Trash2, RotateCcw, RefreshCw, CheckCircle, AlertCircle } from "lucide-react";
 import { ApiKeys } from "./ApiKeys";
+import { OpenAICompatible } from "./OpenAICompatible";
 
 interface ActionButtonProps {
   onClick: () => void;
@@ -159,6 +160,10 @@ export function Admin() {
 
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <ApiKeys />
+      </div>
+
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <OpenAICompatible />
       </div>
     </div>
   );

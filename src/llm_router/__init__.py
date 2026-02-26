@@ -15,12 +15,12 @@ from llm_router.models import (
 from llm_router.router import IntelligentRouter
 
 __all__ = [
-    "__version__",
     "PROVIDER_CATALOGUE",
+    "CachePolicy",
     "IntelligentRouter",
     "RoutingOptions",
     "RoutingStrategy",
     "TaskType",
-    "CachePolicy",
+    "__version__",
     "settings",
 ]

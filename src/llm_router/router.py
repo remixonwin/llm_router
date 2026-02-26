@@ -50,7 +50,6 @@ from .discovery import CapabilityDiscovery
 from .models import (
     CachePolicy,
     ModelRecord,
-    ProviderState,
     RouteDecision,
     RoutingOptions,
     RoutingStrategy,
@@ -326,7 +325,7 @@ class IntelligentRouter:
         # ── Cache store ──────────────────────────────────────────────────────
         # Skip caching for streaming requests - the response is an async iterable
         # that cannot be pickled. But cache if it's a dict (collected streaming response).
-        is_streaming = request_data.get("stream", False)
+        _is_streaming = request_data.get("stream", False)
         is_dict_response = isinstance(result, dict)
 
         if opts.cache_policy != CachePolicy.DISABLED and cache_key and is_dict_response:
@@ -837,7 +836,7 @@ class IntelligentRouter:
 
         combined_content = ""
         first_chunk = chunks[0]
-        last_chunk = chunks[-1]
+        _last_chunk = chunks[-1]
         completion_tokens = 0
         finish_reason = "stop"
 

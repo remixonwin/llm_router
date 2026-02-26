@@ -7,6 +7,9 @@ import type {
   AdminResponse,
   ApiKeyStatus,
   SetApiKeyRequest,
+  OpenAICompatibleEndpoint,
+  CreateOpenAICompatibleRequest,
+  TestEndpointResponse,
 } from "../types";
 
 const API_BASE = "/api";
@@ -69,5 +72,33 @@ export const api = {
   deleteApiKey: (provider: string) =>
     fetchApi<AdminResponse>(`/admin/api-keys/${provider}`, {
       method: "DELETE",
+    }),
+
+  getOpenAICompatibleEndpoints: () =>
+    fetchApi<OpenAICompatibleEndpoint[]>("/admin/api-keys/openai-compatible"),
+
+  createOpenAICompatibleEndpoint: (endpoint: CreateOpenAICompatibleRequest) =>
+    fetchApi<AdminResponse & { id?: string }>("/admin/api-keys/openai-compatible", {
+      method: "POST",
+      body: JSON.stringify(endpoint),
+    }),
+
+  updateOpenAICompatibleEndpoint: (
+    id: string,
+    endpoint: CreateOpenAICompatibleRequest
+  ) =>
+    fetchApi<AdminResponse>(`/admin/api-keys/openai-compatible/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(endpoint),
+    }),
+
+  deleteOpenAICompatibleEndpoint: (id: string) =>
+    fetchApi<AdminResponse>(`/admin/api-keys/openai-compatible/${id}`, {
+      method: "DELETE",
+    }),
+
+  testOpenAICompatibleEndpoint: (id: string) =>
+    fetchApi<TestEndpointResponse>(`/admin/api-keys/openai-compatible/${id}/test`, {
+      method: "POST",
     }),
 };

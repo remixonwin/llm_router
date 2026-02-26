@@ -1,3 +1,12 @@
+# Stage 1: Build the React frontend
+FROM node:22-slim AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 2: Build the final image
 FROM python:3.11-slim AS builder
 
 WORKDIR /build
@@ -20,6 +29,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /root/.local /root/.local
 COPY --from=builder /build/src /app/src
+# Copy the built frontend
+COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 ENV PYTHONPATH=/app/src:/root/.local/lib/python3.11/site-packages \
     PYTHONUNBUFFERED=1 \

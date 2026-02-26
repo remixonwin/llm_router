@@ -28,13 +28,13 @@ from typing import Any
 # Do NOT load dotenv at module import time in production-ready code. Loading
 # env files should happen at process start (main) so libraries importing this
 # module in other contexts don't have side effects.
-from fastapi import Depends, FastAPI, Header, HTTPException, Request  # type: ignore[import]
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, StaticFiles  # type: ignore[import]
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import]
 from fastapi.responses import JSONResponse, StreamingResponse  # type: ignore[import]
 from pydantic import BaseModel, Field  # type: ignore[import]
 
-from llm_router.config import PROVIDER_CATALOGUE, settings  # type: ignore[import]
 from llm_router.admin import router as admin_router  # type: ignore[import]
+from llm_router.config import PROVIDER_CATALOGUE, settings  # type: ignore[import]
 from llm_router.models import (  # type: ignore[import]
     RoutingOptions,
     TaskType,
@@ -43,7 +43,7 @@ from llm_router.router import IntelligentRouter  # type: ignore[import]
 
 logger = logging.getLogger(__name__)
 
-import secrets
+import secrets  # noqa: E402
 
 ROUTER_API_KEY: str | None = None
 
@@ -113,8 +113,8 @@ def _require_router_api_key(authorization: str | None = Header(None)) -> str:
             raise HTTPException(status_code=401, detail="Invalid or missing API key")
         if key != configured_key:
             raise HTTPException(status_code=401, detail="Invalid or missing API key")
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    except ValueError as err:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key") from err
 
     return key
 
@@ -180,6 +180,11 @@ app.add_middleware(
 )
 
 app.include_router(admin_router)
+
+# Mount static files for the frontend if they exist
+frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist")
+if os.path.exists(frontend_dist):
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

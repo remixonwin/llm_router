@@ -34,3 +34,4 @@ router.log
 # development and currently has a known backend-integration bug. Keep the
 # CLI directory in the repo but exclude it from release artifacts.
 /cli/
+frontend/test-results/

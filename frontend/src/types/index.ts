@@ -60,8 +60,43 @@ export interface StatsResponse {
 }
 
 export interface AdminResponse {
-  status: "ok" | "error";
+  status: 'ok' | 'error';
   message: string;
+}
+
+export interface ApiKeyStatus {
+  provider: string;
+  has_key: boolean;
+  key_masked: string | null;
+}
+
+export interface SetApiKeyRequest {
+  api_key: string;
+}
+
+export interface OpenAICompatibleEndpoint {
+  id: string;
+  name: string;
+  base_url: string;
+  api_key: string | null;
+  models: string;
+  streaming: boolean;
+  enabled: boolean;
+}
+
+export interface CreateOpenAICompatibleRequest {
+  name: string;
+  base_url: string;
+  api_key: string | null;
+  models: string;
+  streaming: boolean;
+  enabled: boolean;
+}
+
+export interface TestEndpointResponse {
+  success: boolean;
+  message: string;
+  models: string[] | null;
 }
 
 export interface ApiKeyStatus {
