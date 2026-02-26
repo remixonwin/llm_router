@@ -1,20 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../../services/api';
-import { CheckCircle, XCircle, AlertCircle, RefreshCw } from 'lucide-react';
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../../services/api";
+import { CheckCircle, XCircle, AlertCircle, RefreshCw } from "lucide-react";
 
-function ProviderCard({
-  name,
-  available,
-}: {
-  name: string;
-  available: boolean;
-}) {
+function ProviderCard({ name, available }: { name: string; available: boolean }) {
   return (
     <div
       className={`p-4 rounded-lg border ${
-        available
-          ? 'bg-white border-green-200 shadow-sm'
-          : 'bg-gray-50 border-gray-200'
+        available ? "bg-white border-green-200 shadow-sm" : "bg-gray-50 border-gray-200"
       }`}
     >
       <div className="flex items-center gap-3">
@@ -23,11 +15,7 @@ function ProviderCard({
         ) : (
           <XCircle className="h-5 w-5 text-gray-400" />
         )}
-        <span
-          className={`font-medium capitalize ${
-            available ? 'text-gray-900' : 'text-gray-500'
-          }`}
-        >
+        <span className={`font-medium capitalize ${available ? "text-gray-900" : "text-gray-500"}`}>
           {name}
         </span>
       </div>
@@ -36,14 +24,19 @@ function ProviderCard({
 }
 
 export function Dashboard() {
-  const { data: health, isLoading, refetch, error } = useQuery({
-    queryKey: ['health'],
+  const {
+    data: health,
+    isLoading,
+    refetch,
+    error,
+  } = useQuery({
+    queryKey: ["health"],
     queryFn: api.getHealth,
     refetchInterval: 30000,
   });
 
   const { data: providers } = useQuery({
-    queryKey: ['providers'],
+    queryKey: ["providers"],
     queryFn: api.getProviders,
     refetchInterval: 30000,
   });
@@ -65,9 +58,7 @@ export function Dashboard() {
     );
   }
 
-  const allProviders = providers
-    ? Object.keys(providers.providers).sort()
-    : [];
+  const allProviders = providers ? Object.keys(providers.providers).sort() : [];
 
   return (
     <div className="space-y-6">
@@ -86,10 +77,10 @@ export function Dashboard() {
           <p className="text-sm text-gray-500">Status</p>
           <p
             className={`text-2xl font-semibold ${
-              health?.status === 'healthy' ? 'text-green-600' : 'text-yellow-600'
+              health?.status === "healthy" ? "text-green-600" : "text-yellow-600"
             }`}
           >
-            {health?.status === 'healthy' ? 'Healthy' : 'Degraded'}
+            {health?.status === "healthy" ? "Healthy" : "Degraded"}
           </p>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
@@ -100,24 +91,18 @@ export function Dashboard() {
         </div>
         <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
           <p className="text-sm text-gray-500">Total Providers</p>
-          <p className="text-2xl font-semibold text-gray-900">
-            {health?.providers_total || 0}
-          </p>
+          <p className="text-2xl font-semibold text-gray-900">{health?.providers_total || 0}</p>
         </div>
       </div>
 
       <div>
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          Provider Health
-        </h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Provider Health</h3>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-          {allProviders.map((provider) => (
+          {allProviders.map(provider => (
             <ProviderCard
               key={provider}
               name={provider}
-              available={
-                health?.providers_available.includes(provider) || false
-              }
+              available={health?.providers_available.includes(provider) || false}
             />
           ))}
         </div>
@@ -125,21 +110,15 @@ export function Dashboard() {
 
       {providers?.cache && (
         <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Cache Overview
-          </h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Cache Overview</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <p className="text-sm text-gray-500">Hits</p>
-              <p className="text-xl font-semibold text-gray-900">
-                {providers.cache.hits}
-              </p>
+              <p className="text-xl font-semibold text-gray-900">{providers.cache.hits}</p>
             </div>
             <div>
               <p className="text-sm text-gray-500">Misses</p>
-              <p className="text-xl font-semibold text-gray-900">
-                {providers.cache.misses}
-              </p>
+              <p className="text-xl font-semibold text-gray-900">{providers.cache.misses}</p>
             </div>
             <div>
               <p className="text-sm text-gray-500">Size</p>
@@ -149,9 +128,7 @@ export function Dashboard() {
             </div>
             <div>
               <p className="text-sm text-gray-500">Entries</p>
-              <p className="text-xl font-semibold text-gray-900">
-                {providers.cache.length}
-              </p>
+              <p className="text-xl font-semibold text-gray-900">{providers.cache.length}</p>
             </div>
           </div>
         </div>

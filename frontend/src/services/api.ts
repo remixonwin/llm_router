@@ -7,11 +7,11 @@ import type {
   AdminResponse,
   ApiKeyStatus,
   SetApiKeyRequest,
-} from '../types';
+} from "../types";
 
-const API_BASE = '/api';
+const API_BASE = "/api";
 
-const ROUTER_API_KEY = 'remixonwin';
+const ROUTER_API_KEY = "remixonwin";
 
 function getAuthHeaders() {
   return {
@@ -23,14 +23,14 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
   const response = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       ...getAuthHeaders(),
       ...options?.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Request failed' }));
+    const error = await response.json().catch(() => ({ detail: "Request failed" }));
     throw new Error(error.detail || `HTTP ${response.status}`);
   }
 
@@ -38,39 +38,36 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
 }
 
 export const api = {
-  getHealth: () => fetchApi<HealthStatus>('/health'),
+  getHealth: () => fetchApi<HealthStatus>("/health"),
 
-  getProviders: () => fetchApi<ProvidersResponse>('/providers'),
+  getProviders: () => fetchApi<ProvidersResponse>("/providers"),
 
   getProvider: (provider: string) =>
-    fetchApi<ProvidersResponse['providers']>(`/providers/${provider}`),
+    fetchApi<ProvidersResponse["providers"]>(`/providers/${provider}`),
 
-  getModels: () => fetchApi<ModelsResponse>('/v1/models'),
+  getModels: () => fetchApi<ModelsResponse>("/v1/models"),
 
   getProviderModels: (provider: string) =>
     fetchApi<ProviderModelsResponse>(`/v1/models/${provider}`),
 
-  getStats: () => fetchApi<StatsResponse>('/stats'),
+  getStats: () => fetchApi<StatsResponse>("/stats"),
 
-  clearCache: () =>
-    fetchApi<AdminResponse>('/admin/cache/clear', { method: 'POST' }),
+  clearCache: () => fetchApi<AdminResponse>("/admin/cache/clear", { method: "POST" }),
 
-  resetQuotas: () =>
-    fetchApi<AdminResponse>('/admin/quotas/reset', { method: 'POST' }),
+  resetQuotas: () => fetchApi<AdminResponse>("/admin/quotas/reset", { method: "POST" }),
 
-  refreshModels: () =>
-    fetchApi<AdminResponse>('/admin/refresh', { method: 'POST' }),
+  refreshModels: () => fetchApi<AdminResponse>("/admin/refresh", { method: "POST" }),
 
-  getApiKeys: () => fetchApi<ApiKeyStatus[]>('/admin/api-keys'),
+  getApiKeys: () => fetchApi<ApiKeyStatus[]>("/admin/api-keys"),
 
   setApiKey: (provider: string, apiKey: string) =>
     fetchApi<AdminResponse>(`/admin/api-keys/${provider}`, {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify({ api_key: apiKey } as SetApiKeyRequest),
     }),
 
   deleteApiKey: (provider: string) =>
     fetchApi<AdminResponse>(`/admin/api-keys/${provider}`, {
-      method: 'DELETE',
+      method: "DELETE",
     }),
 };

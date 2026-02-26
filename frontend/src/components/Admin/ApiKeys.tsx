@@ -1,59 +1,65 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../../services/api';
-import { Key, Eye, EyeOff, Trash2, Save, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
-import type { ApiKeyStatus } from '../../types';
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "../../services/api";
+import { Key, Eye, EyeOff, Trash2, Save, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import type { ApiKeyStatus } from "../../types";
 
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
-  groq: 'Groq',
-  gemini: 'Google Gemini',
-  mistral: 'Mistral',
-  openrouter: 'OpenRouter',
-  together: 'Together AI',
-  huggingface: 'HuggingFace',
-  cohere: 'Cohere',
-  deepseek: 'DeepSeek',
-  dashscope: 'DashScope',
-  xai: 'xAI',
-  openai: 'OpenAI',
-  anthropic: 'Anthropic',
-  openai_compatible: 'OpenAI Compatible',
+  groq: "Groq",
+  gemini: "Google Gemini",
+  mistral: "Mistral",
+  openrouter: "OpenRouter",
+  together: "Together AI",
+  huggingface: "HuggingFace",
+  cohere: "Cohere",
+  deepseek: "DeepSeek",
+  dashscope: "DashScope",
+  xai: "xAI",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  openai_compatible: "OpenAI Compatible",
 };
 
 function ProviderKeyCard({ providerKey }: { providerKey: ApiKeyStatus }) {
   const queryClient = useQueryClient();
-  const [apiKey, setApiKey] = useState('');
+  const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
 
   const setKeyMutation = useMutation({
     mutationFn: () => api.setApiKey(providerKey.provider, apiKey),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['apiKeys'] });
-      setApiKey('');
-      showNotification('success', `API key for ${PROVIDER_DISPLAY_NAMES[providerKey.provider] || providerKey.provider} updated`);
+      queryClient.invalidateQueries({ queryKey: ["apiKeys"] });
+      setApiKey("");
+      showNotification(
+        "success",
+        `API key for ${PROVIDER_DISPLAY_NAMES[providerKey.provider] || providerKey.provider} updated`
+      );
     },
     onError: (error: Error) => {
-      showNotification('error', error.message);
+      showNotification("error", error.message);
     },
   });
 
   const deleteKeyMutation = useMutation({
     mutationFn: () => api.deleteApiKey(providerKey.provider),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['apiKeys'] });
-      showNotification('success', `API key for ${PROVIDER_DISPLAY_NAMES[providerKey.provider] || providerKey.provider} removed`);
+      queryClient.invalidateQueries({ queryKey: ["apiKeys"] });
+      showNotification(
+        "success",
+        `API key for ${PROVIDER_DISPLAY_NAMES[providerKey.provider] || providerKey.provider} removed`
+      );
     },
     onError: (error: Error) => {
-      showNotification('error', error.message);
+      showNotification("error", error.message);
     },
   });
 
   const [notification, setNotification] = useState<{
-    type: 'success' | 'error';
+    type: "success" | "error";
     message: string;
   } | null>(null);
 
-  const showNotification = (type: 'success' | 'error', message: string) => {
+  const showNotification = (type: "success" | "error", message: string) => {
     setNotification({ type, message });
     setTimeout(() => setNotification(null), 3000);
   };
@@ -65,12 +71,12 @@ function ProviderKeyCard({ providerKey }: { providerKey: ApiKeyStatus }) {
       {notification && (
         <div
           className={`flex items-center gap-2 p-2 rounded-md mb-3 text-sm ${
-            notification.type === 'success'
-              ? 'bg-green-50 text-green-700'
-              : 'bg-red-50 text-red-700'
+            notification.type === "success"
+              ? "bg-green-50 text-green-700"
+              : "bg-red-50 text-red-700"
           }`}
         >
-          {notification.type === 'success' ? (
+          {notification.type === "success" ? (
             <CheckCircle className="h-4 w-4" />
           ) : (
             <AlertCircle className="h-4 w-4" />
@@ -86,12 +92,10 @@ function ProviderKeyCard({ providerKey }: { providerKey: ApiKeyStatus }) {
         </div>
         <span
           className={`px-2 py-1 text-xs font-medium rounded ${
-            providerKey.has_key
-              ? 'bg-green-100 text-green-700'
-              : 'bg-gray-100 text-gray-500'
+            providerKey.has_key ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
           }`}
         >
-          {providerKey.has_key ? 'Configured' : 'Not configured'}
+          {providerKey.has_key ? "Configured" : "Not configured"}
         </span>
       </div>
 
@@ -102,10 +106,10 @@ function ProviderKeyCard({ providerKey }: { providerKey: ApiKeyStatus }) {
       <div className="flex gap-2">
         <div className="relative flex-1">
           <input
-            type={showKey ? 'text' : 'password'}
-            placeholder={providerKey.has_key ? 'Enter new key to replace' : 'Enter API key'}
+            type={showKey ? "text" : "password"}
+            placeholder={providerKey.has_key ? "Enter new key to replace" : "Enter API key"}
             value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
+            onChange={e => setApiKey(e.target.value)}
             className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
           />
           <button
@@ -152,8 +156,13 @@ function ProviderKeyCard({ providerKey }: { providerKey: ApiKeyStatus }) {
 }
 
 export function ApiKeys() {
-  const { data: apiKeys, isLoading, error, refetch } = useQuery({
-    queryKey: ['apiKeys'],
+  const {
+    data: apiKeys,
+    isLoading,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ["apiKeys"],
     queryFn: api.getApiKeys,
   });
 
@@ -180,8 +189,8 @@ export function ApiKeys() {
     );
   }
 
-  const configured = apiKeys?.filter((k) => k.has_key) || [];
-  const unconfigured = apiKeys?.filter((k) => !k.has_key) || [];
+  const configured = apiKeys?.filter(k => k.has_key) || [];
+  const unconfigured = apiKeys?.filter(k => !k.has_key) || [];
 
   return (
     <div className="space-y-6">
@@ -201,7 +210,7 @@ export function ApiKeys() {
         <div>
           <h4 className="text-sm font-medium text-gray-700 mb-3">Configured</h4>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {configured.map((pk) => (
+            {configured.map(pk => (
               <ProviderKeyCard key={pk.provider} providerKey={pk} />
             ))}
           </div>
@@ -212,7 +221,7 @@ export function ApiKeys() {
         <div>
           <h4 className="text-sm font-medium text-gray-700 mb-3">Not Configured</h4>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {unconfigured.map((pk) => (
+            {unconfigured.map(pk => (
               <ProviderKeyCard key={pk.provider} providerKey={pk} />
             ))}
           </div>
@@ -221,7 +230,8 @@ export function ApiKeys() {
 
       <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
         <p className="text-sm text-yellow-700">
-          <strong>Note:</strong> After adding or removing API keys, restart the router for changes to take effect.
+          <strong>Note:</strong> After adding or removing API keys, restart the router for changes
+          to take effect.
         </p>
       </div>
     </div>

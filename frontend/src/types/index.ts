@@ -1,5 +1,5 @@
 export interface HealthStatus {
-  status: 'healthy' | 'degraded';
+  status: "healthy" | "degraded";
   providers_available: string[];
   providers_total: number;
 }
@@ -60,7 +60,7 @@ export interface StatsResponse {
 }
 
 export interface AdminResponse {
-  status: 'ok' | 'error';
+  status: "ok" | "error";
   message: string;
 }
 

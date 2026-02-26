@@ -202,8 +202,28 @@ class IntelligentRouter:
                 os.environ[f"{provider.upper()}_BASE_URL"] = base_url
                 os.environ[f"{provider.upper()}_API_BASE"] = base_url
 
-        # Configure OpenAI-compatible custom provider
-        if settings.openai_compatible_api_base:
+        # Configure OpenAI-compatible custom providers (multiple endpoints)
+        oai_endpoints = settings.get_enabled_openai_compatible_endpoints()
+        for endpoint in oai_endpoints:
+            endpoint_id = endpoint.get("id", "default")
+            provider_name = f"openai_compatible_{endpoint_id}"
+
+            base_url = endpoint.get("base_url", "")
+            api_key = endpoint.get("api_key")
+
+            if base_url:
+                os.environ[f"OPENAI_COMPATIBLE_{endpoint_id.upper()}_API_BASE"] = base_url
+                if api_key:
+                    os.environ[f"OPENAI_COMPATIBLE_{endpoint_id.upper()}_API_KEY"] = api_key
+                configured_providers.append(provider_name)
+                logger.info(
+                    "Configured OpenAI-compatible endpoint '%s': %s",
+                    endpoint.get("name", endpoint_id),
+                    base_url,
+                )
+
+        # Legacy single OAI endpoint support
+        if settings.openai_compatible_api_base and not oai_endpoints:
             os.environ["OPENAI_COMPATIBLE_API_BASE"] = settings.openai_compatible_api_base
             api_key = os.getenv("ROUTER_OPENAI_COMPATIBLE_API_KEY", "")
             if api_key:
@@ -752,20 +772,40 @@ class IntelligentRouter:
                 provider = possible_provider
 
         # Handle OpenAI-compatible custom providers
-        if provider == "openai_compatible":
+        if provider and provider.startswith("openai_compatible"):
             cfg = PROVIDER_CATALOGUE.get("openai_compatible", {})
             litellm_provider = cfg.get("litellm_provider", "custom_openai")
-            # Extract the actual model name (strip provider prefix if present)
-            actual_model = model_to_call.split("/", 1)[-1]
+
+            # Extract endpoint ID and actual model name
+            if provider == "openai_compatible":
+                # Legacy single endpoint
+                endpoint_id = None
+                actual_model = model_to_call.split("/", 1)[-1] if model_to_call else ""
+            else:
+                # New format: openai_compatible_{endpoint_id}
+                parts = provider.split("_", 2)
+                endpoint_id = parts[2] if len(parts) > 2 else None
+                actual_model = model_to_call.split("/", 1)[-1] if model_to_call else ""
+
             # Construct model ID with the litellm provider prefix
             model_to_call = f"{litellm_provider}/{actual_model}"
-            if settings.openai_compatible_api_base:
+
+            # Get endpoint-specific configuration
+            if endpoint_id:
+                endpoint = settings.get_openai_compatible_endpoint(endpoint_id)
+                if endpoint:
+                    params["api_base"] = endpoint.get("base_url")
+                    if endpoint.get("api_key"):
+                        params["api_key"] = endpoint.get("api_key")
+                    if endpoint.get("streaming", True):
+                        params["stream"] = True
+            elif settings.openai_compatible_api_base:
+                # Legacy single endpoint
                 params["api_base"] = settings.openai_compatible_api_base
-            if settings.openai_compatible_api_key:
-                params["api_key"] = settings.openai_compatible_api_key
-            # Force streaming for openai_compatible if enabled in settings
-            if settings.openai_compatible_streaming:
-                params["stream"] = True
+                if settings.openai_compatible_api_key:
+                    params["api_key"] = settings.openai_compatible_api_key
+                if settings.openai_compatible_streaming:
+                    params["stream"] = True
 
         # If the model seems unqualified, leave callers to provide proper ids.
         # The tests expect provider/model concatenation when provider is

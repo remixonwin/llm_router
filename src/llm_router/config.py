@@ -189,6 +189,42 @@ except ImportError:
                 return []
             return [o.strip() for o in raw.split(",") if o.strip()]
 
+        @property
+        def openai_compatible_endpoints(self) -> list[dict]:
+            """Load OAI endpoints from env var JSON."""
+            import json
+
+            endpoints_json = os.getenv("ROUTER_OPENAI_COMPATIBLE_ENDPOINTS", "[]")
+            try:
+                endpoints = json.loads(endpoints_json)
+            except json.JSONDecodeError:
+                endpoints = []
+
+            if not endpoints and self.openai_compatible_api_base:
+                endpoints = [
+                    {
+                        "id": "default",
+                        "name": "Default",
+                        "base_url": self.openai_compatible_api_base,
+                        "api_key": self.openai_compatible_api_key,
+                        "models": self.openai_compatible_models,
+                        "streaming": self.openai_compatible_streaming,
+                        "enabled": True,
+                    }
+                ]
+            return endpoints
+
+        def get_openai_compatible_endpoint(self, endpoint_id: str) -> dict | None:
+            """Get a specific OAI endpoint by ID."""
+            for ep in self.openai_compatible_endpoints:
+                if ep.get("id") == endpoint_id:
+                    return ep
+            return None
+
+        def get_enabled_openai_compatible_endpoints(self) -> list[dict]:
+            """Get all enabled OAI endpoints."""
+            return [ep for ep in self.openai_compatible_endpoints if ep.get("enabled", True)]
+
 
 settings = Settings()
 

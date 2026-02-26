@@ -1,24 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../../services/api';
-import { RefreshCw, TrendingUp, Database, Server } from 'lucide-react';
-import type { ProviderStats } from '../../types';
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../../services/api";
+import { RefreshCw, TrendingUp, Database, Server } from "lucide-react";
+import type { ProviderStats } from "../../types";
 
-function UsageBar({
-  used,
-  limit,
-  label,
-}: {
-  used: number;
-  limit: number;
-  label: string;
-}) {
+function UsageBar({ used, limit, label }: { used: number; limit: number; label: string }) {
   const percentage = limit > 0 ? (used / limit) * 100 : 0;
-  const color =
-    percentage > 90
-      ? 'bg-red-500'
-      : percentage > 70
-        ? 'bg-yellow-500'
-        : 'bg-blue-500';
+  const color = percentage > 90 ? "bg-red-500" : percentage > 70 ? "bg-yellow-500" : "bg-blue-500";
 
   return (
     <div className="space-y-1">
@@ -38,25 +25,17 @@ function UsageBar({
   );
 }
 
-function ProviderRow({
-  name,
-  stats,
-}: {
-  name: string;
-  stats: ProviderStats;
-}) {
+function ProviderRow({ name, stats }: { name: string; stats: ProviderStats }) {
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="font-semibold text-gray-900 capitalize">{name}</h3>
         <span
           className={`px-2 py-1 text-xs font-medium rounded ${
-            stats.available
-              ? 'bg-green-100 text-green-700'
-              : 'bg-red-100 text-red-700'
+            stats.available ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
           }`}
         >
-          {stats.available ? 'Available' : 'Unavailable'}
+          {stats.available ? "Available" : "Unavailable"}
         </span>
       </div>
       <div className="space-y-3">
@@ -64,9 +43,7 @@ function ProviderRow({
         <UsageBar used={stats.rpd_used} limit={stats.rpd_limit} label="RPD" />
       </div>
       {stats.error_count > 0 && (
-        <p className="mt-2 text-sm text-red-600">
-          Errors: {stats.error_count}
-        </p>
+        <p className="mt-2 text-sm text-red-600">Errors: {stats.error_count}</p>
       )}
     </div>
   );
@@ -74,7 +51,7 @@ function ProviderRow({
 
 export function Stats() {
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['stats'],
+    queryKey: ["stats"],
     queryFn: api.getStats,
     refetchInterval: 30000,
   });
@@ -107,9 +84,7 @@ export function Stats() {
             <Server className="h-8 w-8 text-blue-600" />
             <div>
               <p className="text-sm text-gray-500">Total Models</p>
-              <p className="text-2xl font-semibold text-gray-900">
-                {data?.total_models || 0}
-              </p>
+              <p className="text-2xl font-semibold text-gray-900">{data?.total_models || 0}</p>
             </div>
           </div>
         </div>
@@ -119,9 +94,7 @@ export function Stats() {
             <Database className="h-8 w-8 text-green-600" />
             <div>
               <p className="text-sm text-gray-500">Cache Hits</p>
-              <p className="text-2xl font-semibold text-gray-900">
-                {data?.cache.hits || 0}
-              </p>
+              <p className="text-2xl font-semibold text-gray-900">{data?.cache.hits || 0}</p>
             </div>
           </div>
         </div>
@@ -131,9 +104,7 @@ export function Stats() {
             <TrendingUp className="h-8 w-8 text-purple-600" />
             <div>
               <p className="text-sm text-gray-500">Cache Misses</p>
-              <p className="text-2xl font-semibold text-gray-900">
-                {data?.cache.misses || 0}
-              </p>
+              <p className="text-2xl font-semibold text-gray-900">{data?.cache.misses || 0}</p>
             </div>
           </div>
         </div>
@@ -141,9 +112,7 @@ export function Stats() {
 
       {data?.models && Object.keys(data.models).length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Models by Provider
-          </h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Models by Provider</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
             {Object.entries(data.models).map(([provider, count]) => (
               <div key={provider} className="text-center">
@@ -156,9 +125,7 @@ export function Stats() {
       )}
 
       <div>
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          Provider Quotas
-        </h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Provider Quotas</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {providers.map(([name, stats]) => (
             <ProviderRow key={name} name={name} stats={stats} />

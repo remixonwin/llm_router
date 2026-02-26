@@ -1,10 +1,10 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Layout } from './components/Layout/Layout';
-import { Dashboard } from './components/Dashboard/Dashboard';
-import { Models } from './components/Models/Models';
-import { Stats } from './components/Stats/Stats';
-import { Admin } from './components/Admin/Admin';
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Layout } from "./components/Layout/Layout";
+import { Dashboard } from "./components/Dashboard/Dashboard";
+import { Models } from "./components/Models/Models";
+import { Stats } from "./components/Stats/Stats";
+import { Admin } from "./components/Admin/Admin";
 
 const queryClient = new QueryClient({
   defaultOptions: {
