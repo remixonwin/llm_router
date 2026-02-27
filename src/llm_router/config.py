@@ -97,17 +97,23 @@ try:
             """Get all enabled OAI endpoints."""
             return [ep for ep in self.openai_compatible_endpoints if ep.get("enabled", True)]
 
-        cors_allowed_origins: str = ""
-        cors_allow_all: bool = True
+        cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000"
+
+        # Rate limiting configuration
+        rate_limit_enabled: bool = True
+        rate_limit_read_requests: int = 100
+        rate_limit_read_window: str = "1 minute"
+        rate_limit_write_requests: int = 10
+        rate_limit_write_window: str = "1 minute"
+        rate_limit_redis_url: str = "redis://localhost:6379/0"
 
         @property
         def cors_origins(self) -> list[str]:
-            if self.cors_allow_all:
-                return ["*"]
             raw = (self.cors_allowed_origins or "").strip()
             if not raw:
                 return []
             return [o.strip() for o in raw.split(",") if o.strip()]
+
 
 
 except ImportError:
@@ -174,20 +180,22 @@ except ImportError:
                 "ROUTER_OPENAI_COMPATIBLE_STREAMING", "true"
             ).lower() in ("1", "true", "yes")
             self.cors_allowed_origins = os.getenv("ROUTER_CORS_ALLOWED_ORIGINS", "")
-            self.cors_allow_all = os.getenv("ROUTER_CORS_ALLOW_ALL", "").lower() in (
-                "1",
-                "true",
-                "yes",
-            )
+
+            # Rate limiting configuration
+            self.rate_limit_enabled = os.getenv("ROUTER_RATE_LIMIT_ENABLED", "true").lower() in ("1", "true", "yes")
+            self.rate_limit_read_requests = int(os.getenv("ROUTER_RATE_LIMIT_READ_REQUESTS", "100"))
+            self.rate_limit_read_window = os.getenv("ROUTER_RATE_LIMIT_READ_WINDOW", "1 minute")
+            self.rate_limit_write_requests = int(os.getenv("ROUTER_RATE_LIMIT_WRITE_REQUESTS", "10"))
+            self.rate_limit_write_window = os.getenv("ROUTER_RATE_LIMIT_WRITE_WINDOW", "1 minute")
+            self.rate_limit_redis_url = os.getenv("ROUTER_RATE_LIMIT_REDIS_URL", "redis://localhost:6379/0")
 
         @property
         def cors_origins(self) -> list[str]:
-            if self.cors_allow_all:
-                return ["*"]
             raw = (self.cors_allowed_origins or "").strip()
             if not raw:
                 return []
             return [o.strip() for o in raw.split(",") if o.strip()]
+
 
         @property
         def openai_compatible_endpoints(self) -> list[dict]:

@@ -152,13 +152,11 @@ function EndpointForm({
     const data: CreateOpenAICompatibleRequest = {
       name: name || baseUrl.split("/").slice(0, 3).join("/"),
       base_url: baseUrl,
+      api_key: apiKey || "",
       models,
       streaming,
       enabled,
     };
-    if (apiKey) {
-      data.api_key = apiKey;
-    }
     onSave(data);
   };
 

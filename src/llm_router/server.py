@@ -40,8 +40,31 @@ from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import]
 from fastapi.responses import JSONResponse, StreamingResponse  # type: ignore[import]
 from pydantic import BaseModel, Field  # type: ignore[import]
 
+# Unified Shared Infrastructure
+try:
+    from shared.config import settings as unified_settings
+    from shared.rate_limit import limiter
+    from slowapi.errors import RateLimitExceeded
+    _UNIFIED_MODE = True
+except ImportError:
+    # Fallback to local config if running standalone
+    from llm_router.config import settings as unified_settings
+    from slowapi import Limiter
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+    limiter = Limiter(key_func=get_remote_address)
+    _UNIFIED_MODE = False
+
+# We still need redis for the local lifespan if running standalone
+try:
+    import redis.asyncio as redis
+except ImportError:
+    redis = None  # type: ignore[assignment]
+
 from llm_router.admin import router as admin_router  # type: ignore[import]
 from llm_router.config import PROVIDER_CATALOGUE, settings  # type: ignore[import]
+
+
 from llm_router.models import (  # type: ignore[import]
     RoutingOptions,
     TaskType,
@@ -54,6 +77,9 @@ import secrets  # noqa: E402
 
 ROUTER_API_KEY: str | None = None
 
+# Rate limiter instance — imported from shared.rate_limit above
+
+
 
 def get_router_api_key() -> str:
     global ROUTER_API_KEY
@@ -63,8 +89,9 @@ def get_router_api_key() -> str:
             logger.info("ROUTER API KEY loaded from config")
         else:
             ROUTER_API_KEY = secrets.token_urlsafe(32)
+            masked_key = ROUTER_API_KEY[:4] + "****" + ROUTER_API_KEY[-4:]
             logger.info("=" * 60)
-            logger.info("ROUTER API KEY (use in external apps): %s", ROUTER_API_KEY)
+            logger.info("ROUTER API KEY (use in external apps): %s", masked_key)
             logger.info("=" * 60)
     return ROUTER_API_KEY
 
@@ -96,12 +123,6 @@ def _require_admin_token(_x_admin_token: str | None = Header(None)) -> None:
 
 def _require_router_api_key(authorization: str | None = Header(None)) -> str:
     """Validate API key for protected endpoints."""
-    import os
-
-    # During pytest runs we don't require an API key to simplify testing.
-    if "PYTEST_CURRENT_TEST" in os.environ:
-        return ""
-
     require_key = os.getenv("ROUTER_REQUIRE_API_KEY", "true").lower() not in ("0", "false", "no")
 
     if not require_key:
@@ -126,6 +147,7 @@ def _require_router_api_key(authorization: str | None = Header(None)) -> str:
     return key
 
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 # FastAPI lifespan (startup / shutdown)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -137,6 +159,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     The router is created at process startup and stopped cleanly on shutdown.
     """
+    # Configure rate limiter with Redis storage if enabled (skip in unified mode)
+    if not _UNIFIED_MODE and settings.rate_limit_enabled and redis:
+        try:
+            redis_client = redis.from_url(settings.rate_limit_redis_url)
+            await redis_client.ping()
+            # Use Redis storage for distributed rate limiting
+            from slowapi._store import RedisRateLimit
+            limiter.storage = RedisRateLimit(redis_client)
+            logger.info("Rate limiting enabled with Redis backend (standalone)")
+        except Exception as e:
+            logger.warning(f"Failed to connect to Redis for rate limiting: {e}. Using in-memory storage.")
+
+
     # `global` is required to assign the module-level singleton instance.
     # pylint: disable=global-statement
     global _router
@@ -178,13 +213,30 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Add rate limiter to app state
+app.state.limiter = limiter
+
+# Add rate limit exception handler
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "Rate limit exceeded",
+            "detail": str(exc.detail),
+            "retry_after": exc.detail,
+        },
+        headers={"Retry-After": str(exc.detail)},
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=unified_settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept", "User-Agent"],
 )
+
 
 app.include_router(admin_router)
 
@@ -260,7 +312,9 @@ async def health() -> dict[str, Any]:
 
 
 @app.get("/v1/models", tags=["Discovery"])
-async def list_models(_api_key: str = Depends(_require_router_api_key)) -> dict[str, Any]:
+@limiter.limit(f"{unified_settings.rate_limit_read_requests}/{unified_settings.rate_limit_read_window}")
+async def list_models(request: Request, _api_key: str = Depends(_require_router_api_key)) -> dict[str, Any]:
+
     r = get_router()
     all_models = r.discovery.get_all_models()
     return {
@@ -306,15 +360,21 @@ ROUTER_MODEL_ALIASES = ("router", "auto", "any", "*", "gpt-4o")
 
 
 @app.post("/v1/chat/completions/chat/completions", tags=["Completions"])
+@limiter.limit(f"{settings.rate_limit_write_requests}/{settings.rate_limit_write_window}")
 async def chat_completions_duplicated(
-    request: ChatRequest, _api_key: str = Depends(_require_router_api_key)
+    request: Request,
+    request_body: ChatRequest,
+    _api_key: str = Depends(_require_router_api_key),
 ) -> Any:
     """Handle duplicate path - client is sending to /v1/chat/completions/chat/completions"""
-    return await chat_completions(request, _api_key)
+    return await chat_completions(request_body, _api_key)
 
 
 @app.get("/v1/chat/completions/models", tags=["Discovery"])
+@limiter.limit(f"{unified_settings.rate_limit_read_requests}/{unified_settings.rate_limit_read_window}")
 async def list_models_wrong_path(
+    request: Request,
+
     _api_key: str = Depends(_require_router_api_key),
 ) -> dict[str, Any]:
     """Handle wrong path - client is sending to /v1/chat/completions/models"""
@@ -322,14 +382,20 @@ async def list_models_wrong_path(
 
 
 @app.get("/v1/chat/completions", tags=["Completions"])
-async def chat_completions_get(_api_key: str = Depends(_require_router_api_key)) -> dict[str, Any]:
+@limiter.limit(f"{unified_settings.rate_limit_read_requests}/{unified_settings.rate_limit_read_window}")
+async def chat_completions_get(request: Request, _api_key: str = Depends(_require_router_api_key)) -> dict[str, Any]:
+
     """Handle GET request to /v1/chat/completions - return models list"""
     return await list_models(_api_key)
 
 
 @app.post("/v1/chat/completions", tags=["Completions"])
+@limiter.limit(f"{unified_settings.rate_limit_write_requests}/{unified_settings.rate_limit_write_window}")
 async def chat_completions(
-    request: ChatRequest, _api_key: str = Depends(_require_router_api_key)
+    request: Request,
+    request_body: ChatRequest,
+
+    _api_key: str = Depends(_require_router_api_key),
 ) -> Any:
     """Handle chat completion requests; supports streaming via SSE."""
     r = get_router()
@@ -437,15 +503,18 @@ async def chat_completions(
 
 
 @app.post("/v1/embeddings", tags=["Embeddings"])
+@limiter.limit(f"{settings.rate_limit_write_requests}/{settings.rate_limit_write_window}")
 async def embeddings(
-    request: EmbedRequest, _api_key: str = Depends(_require_router_api_key)
+    request: Request,
+    request_body: EmbedRequest,
+    _api_key: str = Depends(_require_router_api_key),
 ) -> Any:
     """Create embeddings for provided input using the routing layer."""
     r = get_router()
     try:
         result = await r.route(
-            {"input": request.input, "task_type": "embeddings"},
-            request.routing,
+            {"input": request_body.input, "task_type": "embeddings"},
+            request_body.routing,
         )
         return result
     except RuntimeError as e:
@@ -459,26 +528,29 @@ async def embeddings(
 
 
 @app.post("/v1/vision", tags=["Vision"])
+@limiter.limit(f"{settings.rate_limit_write_requests}/{settings.rate_limit_write_window}")
 async def vision(
-    request: VisionTaskRequest, _api_key: str = Depends(_require_router_api_key)
+    request: Request,
+    request_body: VisionTaskRequest,
+    _api_key: str = Depends(_require_router_api_key),
 ) -> Any:
     """Handle vision tasks (classify/detect/ocr/qa/caption)."""
     r = get_router()
-    if not request.image_url and not request.image_base64:
+    if not request_body.image_url and not request_body.image_base64:
         raise HTTPException(
             status_code=422,
             detail="Provide either image_url or image_base64",
         )
     try:
         request_data: dict[str, Any] = {
-            "task_type": request.task_type.value,
-            "image_url": request.image_url,
-            "image_base64": request.image_base64,
-            "question": request.question,
-            "categories": request.categories,
-            "language": request.language,
+            "task_type": request_body.task_type.value,
+            "image_url": request_body.image_url,
+            "image_base64": request_body.image_base64,
+            "question": request_body.question,
+            "categories": request_body.categories,
+            "language": request_body.language,
         }
-        result = await r.route(request_data, request.routing)
+        result = await r.route(request_data, request_body.routing)
         return result
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
@@ -491,7 +563,8 @@ async def vision(
 
 
 @app.get("/providers", tags=["Observability"])
-async def provider_stats() -> dict[str, Any]:
+@limiter.limit(f"{settings.rate_limit_read_requests}/{settings.rate_limit_read_window}")
+async def provider_stats(request: Request) -> dict[str, Any]:
     """Return quota and cache stats for all providers."""
     r = get_router()
     return {
@@ -553,33 +626,15 @@ async def full_stats() -> dict[str, Any]:
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Mount static files for the frontend if they exist
-frontend_dist = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist"
-)
-if os.path.exists(frontend_dist):
-    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
-
-
-# Exception handlers
+# Use ROUTER_FRONTEND_DIR env var to avoid hardcoding filesystem paths.
 # ══════════════════════════════════════════════════════════════════════════════
-
-
-@app.exception_handler(Exception)
-async def global_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
-    """Global exception handler that returns a short JSON error object."""
-    logger.exception("Unhandled exception: %s", exc)
-    return JSONResponse(
-        status_code=500,
-        content={"error": {"message": str(exc), "type": type(exc).__name__}},
-    )
-
-
-# Mount static files for the frontend if they exist
-frontend_dist = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist"
+_frontend_dist = os.getenv(
+    "ROUTER_FRONTEND_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist"),
 )
-if os.path.exists(frontend_dist):
-    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
+if os.path.isdir(_frontend_dist):
+    app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="frontend")
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════

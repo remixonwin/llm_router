@@ -236,15 +236,13 @@ class CreateOpenAICompatibleRequest(BaseModel):
 
     name: str
     base_url: str
-    api_key: Optional[str] = None
+    api_key: Optional[str] = ""
     models: str = ""
     streaming: bool = True
     enabled: bool = True
 
     model_config = {
         "extra": "allow",
-        "populate_by_name": True,
-        "validate_default": True,
     }
 
 
