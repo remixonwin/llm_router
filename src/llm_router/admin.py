@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Union
+from typing import Annotated, Any, Optional, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -236,21 +236,15 @@ class CreateOpenAICompatibleRequest(BaseModel):
 
     name: str
     base_url: str
-    api_key: Union[str, None] = None
+    api_key: Optional[str] = None
     models: str = ""
     streaming: bool = True
     enabled: bool = True
 
     model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "name": "My Endpoint",
-                    "base_url": "https://api.example.com/v1",
-                    "models": "model1,model2",
-                }
-            ]
-        }
+        "extra": "allow",
+        "populate_by_name": True,
+        "validate_default": True,
     }
 
 

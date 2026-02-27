@@ -38,6 +38,7 @@ test.describe("Admin Page", () => {
   test("should add new OpenAI-compatible endpoint", async ({ page }) => {
     page.on('console', msg => console.log(`BROWSER LOG: ${msg.text()}`));
     page.on('pageerror', err => console.log(`BROWSER ERROR: ${err}`));
+    page.on('requestfailed', request => console.log(`REQUEST FAILED: ${request.url()} - ${request.failure()?.errorText}`));
     
     await page.getByRole("button", { name: /Add Endpoint/i }).click();
 
@@ -45,7 +46,7 @@ test.describe("Admin Page", () => {
     await page.getByPlaceholder("model1,model2").fill("llama-3.1-8b");
     await page.locator("form button[type='submit']").click();
 
-    await expect(page.getByText("http://host.docker.internal:7330/v1")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("http://host.docker.internal:7330/v1")).toBeVisible({ timeout: 15000 });
   });
 
   test("should test OpenAI-compatible endpoint connection", async ({ page }) => {

@@ -552,6 +552,14 @@ async def full_stats() -> dict[str, Any]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Mount static files for the frontend if they exist
+frontend_dist = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist"
+)
+if os.path.exists(frontend_dist):
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
+
+
 # Exception handlers
 # ══════════════════════════════════════════════════════════════════════════════
 

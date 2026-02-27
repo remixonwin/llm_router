@@ -87,7 +87,7 @@ export interface OpenAICompatibleEndpoint {
 export interface CreateOpenAICompatibleRequest {
   name: string;
   base_url: string;
-  api_key: string | null;
+  api_key?: string | null;
   models: string;
   streaming: boolean;
   enabled: boolean;
