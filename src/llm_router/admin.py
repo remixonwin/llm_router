@@ -164,6 +164,11 @@ async def set_api_key(
     provider: str, request: SetApiKeyRequest, _api_key: str = Depends(_require_router_api_key)
 ) -> dict[str, str]:
     """Set or update API key for a provider (writes to .env file)."""
+    if provider == "openai-compatible":
+        raise HTTPException(
+            status_code=404,
+            detail="Use /admin/api-keys/openai-compatible endpoint for custom provider management",
+        )
     if provider not in PROVIDER_CATALOGUE:
         raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
 
@@ -194,6 +199,11 @@ async def delete_api_key(
     provider: str, _api_key: str = Depends(_require_router_api_key)
 ) -> dict[str, str]:
     """Remove API key for a provider (removes from .env file)."""
+    if provider == "openai-compatible":
+        raise HTTPException(
+            status_code=404,
+            detail="Use /admin/api-keys/openai-compatible endpoint for custom provider management",
+        )
     if provider not in PROVIDER_CATALOGUE:
         raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
 

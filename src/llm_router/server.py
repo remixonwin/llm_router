@@ -35,23 +35,26 @@ from fastapi import (  # type: ignore[import]
     HTTPException,
     Request,
 )
-from starlette.staticfiles import StaticFiles  # type: ignore[import]
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import]
-from fastapi.responses import JSONResponse, StreamingResponse  # type: ignore[import]
+from fastapi.responses import JSONResponse, Response, StreamingResponse  # type: ignore[import]
 from pydantic import BaseModel, Field  # type: ignore[import]
+from starlette.staticfiles import StaticFiles  # type: ignore[import]
 
 # Unified Shared Infrastructure
 try:
     from shared.config import settings as unified_settings
     from shared.rate_limit import limiter
     from slowapi.errors import RateLimitExceeded
+
     _UNIFIED_MODE = True
 except ImportError:
     # Fallback to local config if running standalone
-    from llm_router.config import settings as unified_settings
     from slowapi import Limiter
-    from slowapi.util import get_remote_address
     from slowapi.errors import RateLimitExceeded
+    from slowapi.util import get_remote_address
+
+    from llm_router.config import settings as unified_settings
+
     limiter = Limiter(key_func=get_remote_address)
     _UNIFIED_MODE = False
 
@@ -63,8 +66,6 @@ except ImportError:
 
 from llm_router.admin import router as admin_router  # type: ignore[import]
 from llm_router.config import PROVIDER_CATALOGUE, settings  # type: ignore[import]
-
-
 from llm_router.models import (  # type: ignore[import]
     RoutingOptions,
     TaskType,
@@ -78,7 +79,6 @@ import secrets  # noqa: E402
 ROUTER_API_KEY: str | None = None
 
 # Rate limiter instance — imported from shared.rate_limit above
-
 
 
 def get_router_api_key() -> str:
@@ -95,6 +95,35 @@ def get_router_api_key() -> str:
             logger.info("=" * 60)
     return ROUTER_API_KEY
 
+
+# Prometheus metrics imports and setup
+try:
+    from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+
+    _METRICS_AVAILABLE = True
+except ImportError:
+    _METRICS_AVAILABLE = False
+
+# Prometheus metrics - only initialize if prometheus_client is available
+if _METRICS_AVAILABLE:
+    request_count = Counter(
+        "llm_router_requests_total", "Total HTTP requests", ["method", "endpoint", "status"]
+    )
+    request_duration = Histogram(
+        "llm_router_request_duration_seconds",
+        "HTTP request duration in seconds",
+        ["method", "endpoint"],
+    )
+    router_requests = Counter(
+        "llm_router_router_requests_total",
+        "Total LLM router requests",
+        ["model", "provider", "status"],
+    )
+    router_latency = Histogram(
+        "llm_router_router_latency_seconds",
+        "LLM router request latency in seconds",
+        ["model", "provider"],
+    )
 
 # pylint: disable=broad-except
 # Broad excepts are used deliberately in FastAPI route handlers and lifecycle
@@ -147,7 +176,6 @@ def _require_router_api_key(authorization: str | None = Header(None)) -> str:
     return key
 
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # FastAPI lifespan (startup / shutdown)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -166,11 +194,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await redis_client.ping()
             # Use Redis storage for distributed rate limiting
             from slowapi._store import RedisRateLimit
+
             limiter.storage = RedisRateLimit(redis_client)
             logger.info("Rate limiting enabled with Redis backend (standalone)")
         except Exception as e:
-            logger.warning(f"Failed to connect to Redis for rate limiting: {e}. Using in-memory storage.")
-
+            logger.warning(
+                f"Failed to connect to Redis for rate limiting: {e}. Using in-memory storage."
+            )
 
     # `global` is required to assign the module-level singleton instance.
     # pylint: disable=global-statement
@@ -216,6 +246,7 @@ app = FastAPI(
 # Add rate limiter to app state
 app.state.limiter = limiter
 
+
 # Add rate limit exception handler
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
@@ -228,6 +259,7 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         },
         headers={"Retry-After": str(exc.detail)},
     )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -297,23 +329,61 @@ async def root() -> dict[str, str]:
 
 @app.get("/health", tags=["Observability"])
 async def health() -> dict[str, Any]:
-    """Return health and provider availability information."""
+    """Return health and provider availability information with dependency status."""
+    import time
+
+    timestamp = time.time()
+    dependencies = {}
+
+    # Check Redis connectivity
+    redis_status = "unknown"
+    if redis:
+        try:
+            redis_client = redis.from_url(settings.rate_limit_redis_url)
+            await redis_client.ping()
+            redis_status = "connected"
+        except Exception as e:
+            redis_status = f"error: {e!s}"
+    dependencies["redis"] = {"status": redis_status, "checked_at": timestamp}
+
+    # Check provider availability
     r = get_router()
     stats = r.quota.get_stats()
     available = [p for p, s in stats.items() if s["available"]]
+
     return {
         "status": "healthy" if available else "degraded",
         "providers_available": available,
         "providers_total": len(stats),
+        "dependencies": dependencies,
+        "timestamp": timestamp,
     }
+
+
+# ── Metrics ────────────────────────────────────────────────────────────────────
+
+
+@app.get("/metrics", tags=["Observability"])
+async def metrics() -> Response:
+    """Prometheus metrics endpoint."""
+    if _METRICS_AVAILABLE:
+        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    return Response(
+        content=b"# Metrics not available - prometheus_client not installed",
+        media_type="text/plain",
+    )
 
 
 # ── Models list ───────────────────────────────────────────────────────────────
 
 
 @app.get("/v1/models", tags=["Discovery"])
-@limiter.limit(f"{unified_settings.rate_limit_read_requests}/{unified_settings.rate_limit_read_window}")
-async def list_models(request: Request, _api_key: str = Depends(_require_router_api_key)) -> dict[str, Any]:
+@limiter.limit(
+    f"{unified_settings.rate_limit_read_requests}/{unified_settings.rate_limit_read_window}"
+)
+async def list_models(
+    request: Request, _api_key: str = Depends(_require_router_api_key)
+) -> dict[str, Any]:
 
     r = get_router()
     all_models = r.discovery.get_all_models()
@@ -367,55 +437,66 @@ async def chat_completions_duplicated(
     _api_key: str = Depends(_require_router_api_key),
 ) -> Any:
     """Handle duplicate path - client is sending to /v1/chat/completions/chat/completions"""
-    return await chat_completions(request_body, _api_key)
+    return await chat_completions(request, request_body, _api_key)
 
 
 @app.get("/v1/chat/completions/models", tags=["Discovery"])
-@limiter.limit(f"{unified_settings.rate_limit_read_requests}/{unified_settings.rate_limit_read_window}")
+@limiter.limit(
+    f"{unified_settings.rate_limit_read_requests}/{unified_settings.rate_limit_read_window}"
+)
 async def list_models_wrong_path(
     request: Request,
-
     _api_key: str = Depends(_require_router_api_key),
 ) -> dict[str, Any]:
     """Handle wrong path - client is sending to /v1/chat/completions/models"""
-    return await list_models(_api_key)
+    return await list_models(request, _api_key)
 
 
 @app.get("/v1/chat/completions", tags=["Completions"])
-@limiter.limit(f"{unified_settings.rate_limit_read_requests}/{unified_settings.rate_limit_read_window}")
-async def chat_completions_get(request: Request, _api_key: str = Depends(_require_router_api_key)) -> dict[str, Any]:
-
+@limiter.limit(
+    f"{unified_settings.rate_limit_read_requests}/{unified_settings.rate_limit_read_window}"
+)
+async def chat_completions_get(
+    request: Request, _api_key: str = Depends(_require_router_api_key)
+) -> dict[str, Any]:
     """Handle GET request to /v1/chat/completions - return models list"""
-    return await list_models(_api_key)
+    return await list_models(request, _api_key)
 
 
 @app.post("/v1/chat/completions", tags=["Completions"])
-@limiter.limit(f"{unified_settings.rate_limit_write_requests}/{unified_settings.rate_limit_write_window}")
+@limiter.limit(
+    f"{unified_settings.rate_limit_write_requests}/{unified_settings.rate_limit_write_window}"
+)
 async def chat_completions(
     request: Request,
     request_body: ChatRequest,
-
     _api_key: str = Depends(_require_router_api_key),
 ) -> Any:
     """Handle chat completion requests; supports streaming via SSE."""
     r = get_router()
     try:
         request_data: dict[str, Any] = {
-            "messages": [m if isinstance(m, dict) else m.model_dump() for m in request.messages],
-            "temperature": request.temperature,
-            "max_tokens": request.max_tokens,
-            "top_p": request.top_p,
-            "stream": request.stream,
-            "tools": request.tools,
-            "tool_choice": request.tool_choice,
+            "messages": [
+                m if isinstance(m, dict) else m.model_dump()
+                for m in request_body.messages
+            ],
+            "temperature": request_body.temperature,
+            "max_tokens": request_body.max_tokens,
+            "top_p": request_body.top_p,
+            "stream": request_body.stream,
+            "tools": request_body.tools,
+            "tool_choice": request_body.tool_choice,
         }
-        if request.model and request.model.lower() not in ROUTER_MODEL_ALIASES:
-            request_data["model"] = request.model
+        if (
+            request_body.model
+            and request_body.model.lower() not in ROUTER_MODEL_ALIASES
+        ):
+            request_data["model"] = request_body.model
 
         # If the client requested streaming, route with stream and return a
         # StreamingResponse that yields SSE-like `data: ...` lines. The router
         # will attempt to return an async iterable when `stream=True`.
-        if request.stream:
+        if request_body.stream:
 
             async def event_stream():
                 try:
@@ -423,7 +504,9 @@ async def chat_completions(
                     # If the router returned an async generator/iterable,
                     # iterate and yield SSE `data:` chunks. Otherwise, emit
                     # the full JSON as a single event.
-                    if hasattr(async_iterable, "__aiter__"):
+                    if hasattr(async_iterable, "__aiter__") and callable(
+                        getattr(async_iterable, "__aiter__", None)
+                    ):
                         async for chunk in async_iterable:
                             try:
                                 # Extract delta for proper SSE format (OpenAI-compatible)
@@ -634,7 +717,6 @@ _frontend_dist = os.getenv(
 )
 if os.path.isdir(_frontend_dist):
     app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="frontend")
-
 
 
 # ══════════════════════════════════════════════════════════════════════════════

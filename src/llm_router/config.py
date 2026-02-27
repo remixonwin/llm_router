@@ -13,6 +13,19 @@ from __future__ import annotations
 import os
 from typing import Any
 
+# Secrets module for Vault integration (optional)
+SecretsClient = None
+get_secrets_client = None
+try:
+    from vault_secrets.vault import VaultClient as _SecretsClient
+    from vault_secrets.vault import get_vault_client as _get_secrets_client
+
+    SecretsClient = _SecretsClient
+    get_secrets_client = _get_secrets_client
+except ImportError:
+    pass
+
+
 try:
     from pydantic_settings import BaseSettings
 
@@ -107,13 +120,19 @@ try:
         rate_limit_write_window: str = "1 minute"
         rate_limit_redis_url: str = "redis://localhost:6379/0"
 
+        # Input validation settings
+        max_input_length: int = 10 * 1024  # 10KB
+        max_json_depth: int = 10
+        max_array_length: int = 100
+        enable_xss_protection: bool = True
+        enable_path_traversal_protection: bool = True
+
         @property
         def cors_origins(self) -> list[str]:
             raw = (self.cors_allowed_origins or "").strip()
             if not raw:
                 return []
             return [o.strip() for o in raw.split(",") if o.strip()]
-
 
 
 except ImportError:
@@ -182,12 +201,31 @@ except ImportError:
             self.cors_allowed_origins = os.getenv("ROUTER_CORS_ALLOWED_ORIGINS", "")
 
             # Rate limiting configuration
-            self.rate_limit_enabled = os.getenv("ROUTER_RATE_LIMIT_ENABLED", "true").lower() in ("1", "true", "yes")
+            self.rate_limit_enabled = os.getenv("ROUTER_RATE_LIMIT_ENABLED", "true").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
             self.rate_limit_read_requests = int(os.getenv("ROUTER_RATE_LIMIT_READ_REQUESTS", "100"))
             self.rate_limit_read_window = os.getenv("ROUTER_RATE_LIMIT_READ_WINDOW", "1 minute")
-            self.rate_limit_write_requests = int(os.getenv("ROUTER_RATE_LIMIT_WRITE_REQUESTS", "10"))
+            self.rate_limit_write_requests = int(
+                os.getenv("ROUTER_RATE_LIMIT_WRITE_REQUESTS", "10")
+            )
             self.rate_limit_write_window = os.getenv("ROUTER_RATE_LIMIT_WRITE_WINDOW", "1 minute")
-            self.rate_limit_redis_url = os.getenv("ROUTER_RATE_LIMIT_REDIS_URL", "redis://localhost:6379/0")
+            self.rate_limit_redis_url = os.getenv(
+                "ROUTER_RATE_LIMIT_REDIS_URL", "redis://localhost:6379/0"
+            )
+
+            # Input validation settings
+            self.max_input_length = int(os.getenv("ROUTER_MAX_INPUT_LENGTH", str(10 * 1024)))
+            self.max_json_depth = int(os.getenv("ROUTER_MAX_JSON_DEPTH", "10"))
+            self.max_array_length = int(os.getenv("ROUTER_MAX_ARRAY_LENGTH", "100"))
+            self.enable_xss_protection = os.getenv(
+                "ROUTER_ENABLE_XSS_PROTECTION", "true"
+            ).lower() in ("1", "true", "yes")
+            self.enable_path_traversal_protection = os.getenv(
+                "ROUTER_ENABLE_PATH_TRAVERSAL_PROTECTION", "true"
+            ).lower() in ("1", "true", "yes")
 
         @property
         def cors_origins(self) -> list[str]:
@@ -196,6 +234,26 @@ except ImportError:
                 return []
             return [o.strip() for o in raw.split(",") if o.strip()]
 
+        @property
+        def secrets(self) -> dict[str, str | None]:
+            """Get secrets from Vault or environment variables."""
+            secrets_dict = {}
+
+            # Try to get from Vault if available
+            if SecretsClient is not None and get_secrets_client is not None:
+                try:
+                    client = get_secrets_client()
+                    # Get all relevant secrets for llm_router
+                    secrets_dict["api_key"] = client.get("api_key", "llm_router", "")
+                    secrets_dict["jwt_secret"] = client.get("jwt_secret", "shared", "")
+                except Exception:
+                    pass  # Fall back to environment variables
+
+            # Ensure we have the api_key from environment if not from Vault
+            if not secrets_dict.get("api_key"):
+                secrets_dict["api_key"] = os.getenv("ROUTER_API_KEY", "")
+
+            return secrets_dict
 
         @property
         def openai_compatible_endpoints(self) -> list[dict]:
