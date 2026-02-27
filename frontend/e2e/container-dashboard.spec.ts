@@ -1,8 +1,12 @@
 import { test, expect } from "@playwright/test";
 
-test.describe("Dashboard Page", () => {
+/**
+ * Dashboard Page Tests - Container Version
+ * Tests the LLM Router frontend running in standalone container mode on port 7570
+ */
+test.describe("Dashboard Page (Container)", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/llm/");
+    await page.goto("/");
   });
 
   test("should load dashboard and display header", async ({ page }) => {
@@ -29,21 +33,33 @@ test.describe("Dashboard Page", () => {
     });
   });
 
+  test("should display health status correctly", async ({ page }) => {
+    // Check that status is shown (healthy/degraded)
+    const statusElement = page.locator("text=/healthy|degraded|error/i").first();
+    await expect(statusElement).toBeVisible({ timeout: 10000 });
+  });
+
   test("should navigate to Models page", async ({ page }) => {
     await page.getByRole("link", { name: "Models" }).click();
-    await expect(page).toHaveURL("/llm/models");
+    await expect(page).toHaveURL("/models");
     await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();
   });
 
   test("should navigate to Stats page", async ({ page }) => {
     await page.getByRole("link", { name: "Stats" }).click();
-    await expect(page).toHaveURL("/llm/stats");
+    await expect(page).toHaveURL("/stats");
     await expect(page.getByRole("heading", { name: "Statistics" })).toBeVisible();
   });
 
   test("should navigate to Admin page", async ({ page }) => {
     await page.getByRole("link", { name: "Admin" }).click();
-    await expect(page).toHaveURL("/llm/admin");
+    await expect(page).toHaveURL("/admin");
     await expect(page.getByRole("heading", { name: "Admin" })).toBeVisible();
+  });
+
+  test("should handle page refresh on dashboard", async ({ page }) => {
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible({ timeout: 10000 });
+    await expect(page.locator("h1")).toContainText("LLM Router");
   });
 });

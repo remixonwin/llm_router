@@ -15,10 +15,14 @@ const queryClient = new QueryClient({
   },
 });
 
+// Get basename from env or default to "/" for container deployment
+// In unified gateway, this would be "/llm"
+const BASENAME = import.meta.env.VITE_ROUTER_BASENAME || "/";
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      <BrowserRouter basename={BASENAME}>
         <Layout>
           <Routes>
             <Route path="/" element={<Dashboard />} />

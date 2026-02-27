@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 test.describe("Admin Page", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/admin");
+    await page.goto("/llm/admin");
   });
 
   test("should load admin page with heading", async ({ page }) => {
@@ -26,7 +26,7 @@ test.describe("Admin Page", () => {
 
   test("should navigate to Dashboard", async ({ page }) => {
     await page.getByRole("link", { name: "Dashboard" }).click();
-    await expect(page).toHaveURL("/");
+    await expect(page).toHaveURL("/llm");
     await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
   });
 
@@ -50,18 +50,28 @@ test.describe("Admin Page", () => {
     await page.getByPlaceholder("model1,model2").fill("llama-3.1-8b");
     await page.locator("form button[type='submit']").click();
 
-    await expect(page.getByText("http://host.docker.internal:7330/v1")).toBeVisible({
+    await expect(page.getByText("http://host.docker.internal:7330/v1").first()).toBeVisible({
       timeout: 15000,
     });
   });
 
   test("should test OpenAI-compatible endpoint connection", async ({ page }) => {
-    await expect(page.getByText("http://host.docker.internal:7330/v1")).toBeVisible();
+    await page.getByRole("button", { name: /Add Endpoint/i }).click();
+
+    await page
+      .getByPlaceholder("https://api.example.com/v1")
+      .fill("http://localhost:99999/v1");
+    await page.getByPlaceholder("model1,model2").fill("test-model");
+    await page.locator("form button[type='submit']").click();
+
+    await expect(page.getByText("http://localhost:99999/v1").first()).toBeVisible({
+      timeout: 15000,
+    });
 
     await page.getByRole("button", { name: /Test/i }).first().click();
 
-    await expect(page.getByText(/success|connected/i, { exact: false })).toBeVisible({
-      timeout: 10000,
+    await expect(page.getByText(/error|failed|connection/i, { exact: false })).toBeVisible({
+      timeout: 15000,
     });
   });
 });

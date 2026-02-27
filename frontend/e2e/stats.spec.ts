@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 test.describe("Stats Page", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/stats");
+    await page.goto("/llm/stats");
   });
 
   test("should load stats page with heading", async ({ page }) => {
@@ -23,7 +23,7 @@ test.describe("Stats Page", () => {
 
   test("should navigate to Admin page", async ({ page }) => {
     await page.getByRole("link", { name: "Admin" }).click();
-    await expect(page).toHaveURL("/admin");
+    await expect(page).toHaveURL("/llm/admin");
     await expect(page.getByRole("heading", { name: "Admin" })).toBeVisible();
   });
 });

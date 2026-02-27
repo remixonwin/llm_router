@@ -62,6 +62,7 @@ except ImportError:
 try:
     import redis.asyncio as redis
 except ImportError:
+    import sys
     redis = None  # type: ignore[assignment]
 
 from llm_router.admin import router as admin_router  # type: ignore[import]
@@ -89,7 +90,7 @@ def get_router_api_key() -> str:
             logger.info("ROUTER API KEY loaded from config")
         else:
             ROUTER_API_KEY = secrets.token_urlsafe(32)
-            masked_key = ROUTER_API_KEY[:4] + "****" + ROUTER_API_KEY[-4:]
+            masked_key = ROUTER_API_KEY[:4] + "****" + ROUTER_API_KEY[-4:] if len(ROUTER_API_KEY) >= 8 else "****"
             logger.info("=" * 60)
             logger.info("ROUTER API KEY (use in external apps): %s", masked_key)
             logger.info("=" * 60)
@@ -105,25 +106,35 @@ except ImportError:
     _METRICS_AVAILABLE = False
 
 # Prometheus metrics - only initialize if prometheus_client is available
+# Use try-except to handle duplicate registration when module is reloaded
 if _METRICS_AVAILABLE:
-    request_count = Counter(
-        "llm_router_requests_total", "Total HTTP requests", ["method", "endpoint", "status"]
-    )
-    request_duration = Histogram(
-        "llm_router_request_duration_seconds",
-        "HTTP request duration in seconds",
-        ["method", "endpoint"],
-    )
-    router_requests = Counter(
-        "llm_router_router_requests_total",
-        "Total LLM router requests",
-        ["model", "provider", "status"],
-    )
-    router_latency = Histogram(
-        "llm_router_router_latency_seconds",
-        "LLM router request latency in seconds",
-        ["model", "provider"],
-    )
+    try:
+        request_count = Counter(
+            "llm_router_requests_total", "Total HTTP requests", ["method", "endpoint", "status"]
+        )
+        request_duration = Histogram(
+            "llm_router_request_duration_seconds",
+            "HTTP request duration in seconds",
+            ["method", "endpoint"],
+        )
+        router_requests = Counter(
+            "llm_router_router_requests_total",
+            "Total LLM router requests",
+            ["model", "provider", "status"],
+        )
+        router_latency = Histogram(
+            "llm_router_router_latency_seconds",
+            "LLM router request latency in seconds",
+            ["model", "provider"],
+        )
+    except ValueError:
+        # Metrics already registered (module reloaded), get existing ones from registry
+        from prometheus_client import REGISTRY
+
+        request_count = REGISTRY._names_to_collectors.get("llm_router_requests_total")
+        request_duration = REGISTRY._names_to_collectors.get("llm_router_request_duration_seconds")
+        router_requests = REGISTRY._names_to_collectors.get("llm_router_router_requests_total")
+        router_latency = REGISTRY._names_to_collectors.get("llm_router_router_latency_seconds")
 
 # pylint: disable=broad-except
 # Broad excepts are used deliberately in FastAPI route handlers and lifecycle
@@ -318,8 +329,8 @@ class VisionTaskRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-@app.get("/", include_in_schema=False)
-async def root() -> dict[str, str]:
+@app.get("/status", include_in_schema=False)
+async def status() -> dict[str, str]:
     """Lightweight health endpoint for probes / browser check."""
     return {"status": "ok", "service": "Intelligent LLM Router v2"}
 
@@ -489,6 +500,7 @@ async def chat_completions(
         }
         if (
             request_body.model
+            and request_body.model is not None
             and request_body.model.lower() not in ROUTER_MODEL_ALIASES
         ):
             request_data["model"] = request_body.model
@@ -500,7 +512,7 @@ async def chat_completions(
 
             async def event_stream():
                 try:
-                    async_iterable = await r.route(request_data, request.routing)
+                    async_iterable: AsyncIterator[Any] | Any = await r.route(request_data, request_body.routing)
                     # If the router returned an async generator/iterable,
                     # iterate and yield SSE `data:` chunks. Otherwise, emit
                     # the full JSON as a single event.
@@ -572,7 +584,7 @@ async def chat_completions(
 
             return StreamingResponse(event_stream(), media_type="text/event-stream")
 
-        result = await r.route(request_data, request.routing)
+        result = await r.route(request_data, request_body.routing)
         return result
 
     except RuntimeError as e:
@@ -715,8 +727,68 @@ _frontend_dist = os.getenv(
     "ROUTER_FRONTEND_DIR",
     os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist"),
 )
+
 if os.path.isdir(_frontend_dist):
-    app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="frontend")
+    from starlette.requests import Request
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
+    # Mount static files at /assets for the built frontend files
+    # (Vite builds assets to /assets folder)
+    assets_dir = os.path.join(_frontend_dist, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    # Serve other static files (favicon, etc.) from root
+    # But don't use html=True because it catches API routes
+    static_files = StaticFiles(directory=_frontend_dist, html=False)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
+        """Custom exception handler to serve index.html for 404s (SPA support)."""
+        # If it's a 404 and not an API route, serve index.html
+        # Only exclude actual API endpoints (v1/, providers/, admin/* POST, health, metrics, stats)
+        path = request.url.path
+        is_api_path = (
+            path.startswith("/v1/") or
+            path.startswith("/providers/") or
+            path == "/providers" or
+            path.startswith("/admin/") or  # admin API endpoints like /admin/cache/clear
+            path == "/health" or
+            path == "/metrics" or
+            path == "/stats"
+        )
+        if exc.status_code == 404 and not is_api_path:
+            index_path = os.path.join(_frontend_dist, "index.html")
+            if os.path.exists(index_path):
+                return Response(content=open(index_path).read(), media_type="text/html")
+        # Otherwise, return the original error
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+        )
+
+    # Add a catch-all route for the SPA (must be added last)
+    @app.get("/{path:path}", include_in_schema=False)
+    async def spa_catch_all(request: Request, path: str):
+        """Serve index.html for any unmatched path (SPA routing)."""
+        # Don't catch API routes - only actual API endpoints
+        # /admin (without trailing slash) is a frontend route
+        # /admin/* (with subpaths) are API routes
+        is_api_path = (
+            path.startswith("v1/") or
+            path.startswith("providers/") or
+            path == "providers" or
+            path.startswith("admin/") or  # admin API endpoints
+            path == "health" or
+            path == "metrics" or
+            path == "stats"
+        )
+        if is_api_path:
+            raise StarletteHTTPException(status_code=404, detail="Not Found")
+        index_path = os.path.join(_frontend_dist, "index.html")
+        if os.path.exists(index_path):
+            return Response(content=open(index_path).read(), media_type="text/html")
+        raise StarletteHTTPException(status_code=404, detail="Not Found")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

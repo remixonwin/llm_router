@@ -12,7 +12,9 @@ import type {
   TestEndpointResponse,
 } from "../types";
 
-const API_BASE = "/api";
+// API_BASE is empty because the LLM Router backend serves API at root paths
+// (e.g., /health, /providers, /v1/models) alongside the frontend static files
+const API_BASE = "";
 
 const ROUTER_API_KEY = "remixonwin";
 

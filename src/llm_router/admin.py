@@ -159,76 +159,6 @@ async def list_api_keys(_api_key: str = Depends(_require_router_api_key)) -> lis
     return result
 
 
-@router.post("/{provider}", response_model=dict[str, str])
-async def set_api_key(
-    provider: str, request: SetApiKeyRequest, _api_key: str = Depends(_require_router_api_key)
-) -> dict[str, str]:
-    """Set or update API key for a provider (writes to .env file)."""
-    if provider == "openai-compatible":
-        raise HTTPException(
-            status_code=404,
-            detail="Use /admin/api-keys/openai-compatible endpoint for custom provider management",
-        )
-    if provider not in PROVIDER_CATALOGUE:
-        raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
-
-    cfg = PROVIDER_CATALOGUE[provider]
-    env_var_name = cfg.get("api_key_env")
-    if not env_var_name:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Provider '{provider}' does not support API key configuration",
-        )
-
-    env_vars = _load_env_file()
-    env_vars[env_var_name] = request.api_key
-    _save_env_file(env_vars)
-
-    os.environ[env_var_name] = request.api_key
-
-    logger.info("API key for %s updated in .env file", provider)
-
-    return {
-        "status": "ok",
-        "message": f"API key for {provider} updated. Restart router to apply changes.",
-    }
-
-
-@router.delete("/{provider}", response_model=dict[str, str])
-async def delete_api_key(
-    provider: str, _api_key: str = Depends(_require_router_api_key)
-) -> dict[str, str]:
-    """Remove API key for a provider (removes from .env file)."""
-    if provider == "openai-compatible":
-        raise HTTPException(
-            status_code=404,
-            detail="Use /admin/api-keys/openai-compatible endpoint for custom provider management",
-        )
-    if provider not in PROVIDER_CATALOGUE:
-        raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
-
-    cfg = PROVIDER_CATALOGUE[provider]
-    env_var_name = cfg.get("api_key_env")
-    if not env_var_name:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Provider '{provider}' does not support API key configuration",
-        )
-
-    env_vars = _load_env_file()
-    if env_var_name in env_vars:
-        del env_vars[env_var_name]
-        _save_env_file(env_vars)
-
-        if env_var_name in os.environ:
-            del os.environ[env_var_name]
-
-        logger.info("API key for %s removed from .env file", provider)
-        return {"status": "ok", "message": f"API key for {provider} removed"}
-    else:
-        return {"status": "ok", "message": f"No API key found for {provider}"}
-
-
 class OpenAICompatibleEndpoint(BaseModel):
     """OpenAI Compatible endpoint configuration."""
 
@@ -295,7 +225,7 @@ async def list_openai_compatible_endpoints(
                 "name": ep.get("name", ""),
                 "base_url": ep.get("base_url", ""),
                 "api_key": ep.get("api_key"),  # Don't expose raw key
-                "models": ep.get("models", ""),
+                "models": ep.get("models") or "",
                 "streaming": ep.get("streaming", True),
                 "enabled": ep.get("enabled", True),
             }
@@ -317,8 +247,8 @@ async def create_openai_compatible_endpoint(
         "id": endpoint_id,
         "name": request.name,
         "base_url": request.base_url,
-        "api_key": request.api_key,
-        "models": request.models,
+        "api_key": request.api_key if request.api_key else None,
+        "models": request.models if request.models else None,
         "streaming": request.streaming,
         "enabled": request.enabled,
     }
@@ -351,8 +281,8 @@ async def update_openai_compatible_endpoint(
                 "id": endpoint_id,
                 "name": request.name,
                 "base_url": request.base_url,
-                "api_key": request.api_key,
-                "models": request.models,
+                "api_key": request.api_key if request.api_key else None,
+                "models": request.models if request.models else None,
                 "streaming": request.streaming,
                 "enabled": request.enabled,
             }
@@ -464,3 +394,63 @@ async def test_openai_compatible_endpoint(
         return {"success": False, "message": "Connection timed out", "models": None}
     except Exception as e:
         return {"success": False, "message": f"Error: {str(e)[:200]}", "models": None}
+
+
+@router.post("/{provider}", response_model=dict[str, str])
+async def set_api_key(
+    provider: str, request: SetApiKeyRequest, _api_key: str = Depends(_require_router_api_key)
+) -> dict[str, str]:
+    """Set or update API key for a provider (writes to .env file)."""
+    if provider not in PROVIDER_CATALOGUE:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
+
+    cfg = PROVIDER_CATALOGUE[provider]
+    env_var_name = cfg.get("api_key_env")
+    if not env_var_name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider '{provider}' does not support API key configuration",
+        )
+
+    env_vars = _load_env_file()
+    env_vars[env_var_name] = request.api_key
+    _save_env_file(env_vars)
+
+    os.environ[env_var_name] = request.api_key
+
+    logger.info("API key for %s updated in .env file", provider)
+
+    return {
+        "status": "ok",
+        "message": f"API key for {provider} updated. Restart router to apply changes.",
+    }
+
+
+@router.delete("/{provider}", response_model=dict[str, str])
+async def delete_api_key(
+    provider: str, _api_key: str = Depends(_require_router_api_key)
+) -> dict[str, str]:
+    """Remove API key for a provider (removes from .env file)."""
+    if provider not in PROVIDER_CATALOGUE:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
+
+    cfg = PROVIDER_CATALOGUE[provider]
+    env_var_name = cfg.get("api_key_env")
+    if not env_var_name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider '{provider}' does not support API key configuration",
+        )
+
+    env_vars = _load_env_file()
+    if env_var_name in env_vars:
+        del env_vars[env_var_name]
+        _save_env_file(env_vars)
+
+        if env_var_name in os.environ:
+            del os.environ[env_var_name]
+
+        logger.info("API key for %s removed from .env file", provider)
+        return {"status": "ok", "message": f"API key for {provider} removed"}
+    else:
+        return {"status": "ok", "message": f"No API key found for {provider}"}

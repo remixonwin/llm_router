@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 test.describe("API Keys Management", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/admin");
+    await page.goto("/llm/admin");
   });
 
   test("should display API keys section", async ({ page }) => {
