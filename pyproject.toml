@@ -20,6 +20,7 @@ dependencies = [
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.0",
     "python-dotenv>=1.0.0",
+    "starlette>=0.40.0",
     "tenacity>=8.3.0",
     "uvicorn[standard]>=0.29.0",
     "xxhash>=3.4.0",

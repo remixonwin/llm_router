@@ -34,8 +34,8 @@ from fastapi import (  # type: ignore[import]
     Header,
     HTTPException,
     Request,
-    StaticFiles,
 )
+from starlette.staticfiles import StaticFiles  # type: ignore[import]
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import]
 from fastapi.responses import JSONResponse, StreamingResponse  # type: ignore[import]
 from pydantic import BaseModel, Field  # type: ignore[import]
@@ -187,13 +187,6 @@ app.add_middleware(
 )
 
 app.include_router(admin_router)
-
-# Mount static files for the frontend if they exist
-frontend_dist = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist"
-)
-if os.path.exists(frontend_dist):
-    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -571,6 +564,14 @@ async def global_exception_handler(_request: Request, exc: Exception) -> JSONRes
         status_code=500,
         content={"error": {"message": str(exc), "type": type(exc).__name__}},
     )
+
+
+# Mount static files for the frontend if they exist
+frontend_dist = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist"
+)
+if os.path.exists(frontend_dist):
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
