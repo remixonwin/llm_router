@@ -246,8 +246,8 @@ class CreateOpenAICompatibleRequest(BaseModel):
 
     name: str
     base_url: str
-    api_key: Optional[str] = ""
-    models: str = ""
+    api_key: str = Field(default_factory=str)
+    models: str = Field(default_factory=str)
     streaming: bool = True
     enabled: bool = True
 
